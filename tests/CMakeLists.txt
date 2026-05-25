@@ -19,6 +19,28 @@ set_target_properties(kairos-grid-tests PROPERTIES
 
 catch_discover_tests(kairos-grid-tests)
 
+# Surge XT oscillator tests — only built when kairos_grid::surge-modules is available.
+if(TARGET kairos_grid::surge-modules)
+    add_executable(kairos-grid-surge-tests
+        test_surge_modules.cpp
+    )
+
+    target_link_libraries(kairos-grid-surge-tests
+        PRIVATE
+            kairos_grid::surge-modules
+            Catch2::Catch2WithMain
+    )
+
+    # Surge headers assert C++17 exactly and require -fno-char8_t in C++20.
+    set_target_properties(kairos-grid-surge-tests PROPERTIES
+        CXX_STANDARD          17
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS        OFF
+    )
+
+    catch_discover_tests(kairos-grid-surge-tests)
+endif()
+
 # MI DSP tests — only built when kairos_grid::mi is available.
 if(TARGET kairos_grid::mi)
     add_executable(kairos-grid-mi-tests

@@ -136,3 +136,18 @@ endif()
 add_library(kairos-surge INTERFACE)
 add_library(kairos_grid::surge ALIAS kairos-surge)
 target_link_libraries(kairos-surge INTERFACE ${_surge_link_libs})
+
+# juce_core.mm and juce_audio_formats.mm pull in macOS system frameworks.
+if(APPLE)
+    target_link_libraries(kairos-surge INTERFACE
+        "-framework Foundation"
+        "-framework AppKit"
+        "-framework CoreServices"
+        "-framework CoreAudio"
+        "-framework CoreMIDI"
+        "-framework Accelerate"
+        "-framework IOKit"
+        "-framework Security"
+        "-framework AudioToolbox"
+    )
+endif()
