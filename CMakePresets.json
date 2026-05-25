@@ -69,20 +69,48 @@
         "KAIROS_GRID_BUILD_MI":    "ON",
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "surge",
+      "displayName": "Surge XT (dev)",
+      "description": "Dev build with Surge XT oscillator/filter/effect wrappers. Set SURGE_SRC_DIR to skip network fetch.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS":  "ON",
+        "KAIROS_GRID_BUILD_SURGE":  "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "ci-surge",
+      "displayName": "CI + Surge XT",
+      "description": "CI Release build with Surge XT wrappers enabled. Set SURGE_SRC_DIR to skip network fetch.",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS":  "ON",
+        "KAIROS_GRID_BUILD_SURGE":  "ON",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "dev",     "configurePreset": "dev" },
-    { "name": "ci",      "configurePreset": "ci" },
-    { "name": "ci-mi",   "configurePreset": "ci-mi" },
-    { "name": "release", "configurePreset": "release" },
-    { "name": "plugin",  "configurePreset": "plugin" },
-    { "name": "mi",      "configurePreset": "mi" }
+    { "name": "dev",      "configurePreset": "dev" },
+    { "name": "ci",       "configurePreset": "ci" },
+    { "name": "ci-mi",    "configurePreset": "ci-mi" },
+    { "name": "release",  "configurePreset": "release" },
+    { "name": "plugin",   "configurePreset": "plugin" },
+    { "name": "mi",       "configurePreset": "mi" },
+    { "name": "surge",    "configurePreset": "surge" },
+    { "name": "ci-surge", "configurePreset": "ci-surge" }
   ],
   "testPresets": [
-    { "name": "dev",   "configurePreset": "dev",   "output": { "outputOnFailure": true } },
-    { "name": "ci",    "configurePreset": "ci",    "output": { "outputOnFailure": true } },
-    { "name": "ci-mi", "configurePreset": "ci-mi", "output": { "outputOnFailure": true } },
-    { "name": "mi",    "configurePreset": "mi",    "output": { "outputOnFailure": true } }
+    { "name": "dev",      "configurePreset": "dev",      "output": { "outputOnFailure": true } },
+    { "name": "ci",       "configurePreset": "ci",       "output": { "outputOnFailure": true } },
+    { "name": "ci-mi",    "configurePreset": "ci-mi",    "output": { "outputOnFailure": true } },
+    { "name": "mi",       "configurePreset": "mi",       "output": { "outputOnFailure": true } },
+    { "name": "surge",    "configurePreset": "surge",    "output": { "outputOnFailure": true } },
+    { "name": "ci-surge", "configurePreset": "ci-surge", "output": { "outputOnFailure": true } }
   ]
 }

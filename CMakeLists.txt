@@ -32,6 +32,7 @@ option(KAIROS_GRID_BUILD_TESTS  "Build kairos-grid unit tests"       OFF)
 option(KAIROS_GRID_BUILD_ENGINE "Build the sample-rate engine library" ON)
 option(KAIROS_GRID_BUILD_PLUGIN "Build the kairos-grid CLAP plugin"   OFF)
 option(KAIROS_GRID_BUILD_MI     "Build MI DSP module wrappers (Plaits, SVF, OnePole)" OFF)
+option(KAIROS_GRID_BUILD_SURGE  "Build Surge XT oscillator/filter/effect wrappers"    OFF)
 
 # ---------------------------------------------------------------------------
 # kairos-grid-engine — pure C++20 engine; no CLAP SDK dependency.
@@ -91,6 +92,28 @@ if(KAIROS_GRID_BUILD_MI AND KAIROS_GRID_BUILD_ENGINE)
     )
 
 endif() # KAIROS_GRID_BUILD_MI
+
+# ---------------------------------------------------------------------------
+# Surge XT DSP wrappers — oscillators, filters, effects.
+# Brings in surge-common and all required support libs via libs/surge.
+# ---------------------------------------------------------------------------
+
+if(KAIROS_GRID_BUILD_SURGE AND KAIROS_GRID_BUILD_ENGINE)
+
+    # Point SURGE_SRC_DIR at a local surge checkout to skip the network fetch:
+    #   cmake --preset surge -DSURGE_SRC_DIR=/path/to/surge
+    add_subdirectory(libs/surge)
+
+    # INTERFACE convenience target — exposes engine headers + all surge link deps.
+    add_library(kairos-grid-surge INTERFACE)
+    add_library(kairos_grid::surge-modules ALIAS kairos-grid-surge)
+
+    target_link_libraries(kairos-grid-surge INTERFACE
+        kairos_grid::engine
+        kairos_grid::surge
+    )
+
+endif() # KAIROS_GRID_BUILD_SURGE
 
 # ---------------------------------------------------------------------------
 # CLAP plugin wrapper — adds CLAP SDK dependency.
