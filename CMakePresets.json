@@ -45,16 +45,31 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "CMAKE_BUILD_TYPE": "Debug"
       }
+    },
+    {
+      "name": "mi",
+      "displayName": "MI modules (dev)",
+      "description": "Dev build with MI DSP wrappers (Plaits, SVF, OnePole). Set EURORACK_SRC_DIR to skip network fetch.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS": "ON",
+        "KAIROS_GRID_BUILD_MI":    "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     }
   ],
   "buildPresets": [
     { "name": "dev",     "configurePreset": "dev" },
     { "name": "ci",      "configurePreset": "ci" },
     { "name": "release", "configurePreset": "release" },
-    { "name": "plugin",  "configurePreset": "plugin" }
+    { "name": "plugin",  "configurePreset": "plugin" },
+    { "name": "mi",      "configurePreset": "mi" }
   ],
   "testPresets": [
     { "name": "dev", "configurePreset": "dev", "output": { "outputOnFailure": true } },
-    { "name": "ci",  "configurePreset": "ci",  "output": { "outputOnFailure": true } }
+    { "name": "ci",  "configurePreset": "ci",  "output": { "outputOnFailure": true } },
+    { "name": "mi",  "configurePreset": "mi",  "output": { "outputOnFailure": true } }
   ]
 }
