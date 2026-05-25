@@ -31,6 +31,7 @@ set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL
 option(KAIROS_GRID_BUILD_TESTS  "Build kairos-grid unit tests"       OFF)
 option(KAIROS_GRID_BUILD_ENGINE "Build the sample-rate engine library" ON)
 option(KAIROS_GRID_BUILD_PLUGIN "Build the kairos-grid CLAP plugin"   OFF)
+option(KAIROS_GRID_BUILD_MI     "Build MI DSP module wrappers (Plaits, SVF, OnePole)" OFF)
 
 # ---------------------------------------------------------------------------
 # kairos-grid-engine — pure C++20 engine; no CLAP SDK dependency.
@@ -67,6 +68,29 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
 endif()
 
 endif() # KAIROS_GRID_BUILD_ENGINE
+
+# ---------------------------------------------------------------------------
+# MI DSP wrappers — Plaits macro-oscillator, stmlib SVF, OnePole.
+# Requires the eurorack static library (GPL-3.0, MIT code within).
+# ---------------------------------------------------------------------------
+
+if(KAIROS_GRID_BUILD_MI AND KAIROS_GRID_BUILD_ENGINE)
+
+    # Point EURORACK_SRC_DIR at a local checkout to skip the network fetch:
+    #   cmake --preset dev -DEURORACK_SRC_DIR=/path/to/surge/libs/eurorack
+    add_subdirectory(libs/eurorack)
+
+    # INTERFACE convenience target — links engine + eurorack so consumers of
+    # the MI headers get all required include paths and link deps in one line.
+    add_library(kairos-grid-mi INTERFACE)
+    add_library(kairos_grid::mi ALIAS kairos-grid-mi)
+
+    target_link_libraries(kairos-grid-mi INTERFACE
+        kairos_grid::engine
+        kairos_grid::eurorack
+    )
+
+endif() # KAIROS_GRID_BUILD_MI
 
 # ---------------------------------------------------------------------------
 # CLAP plugin wrapper — adds CLAP SDK dependency.
