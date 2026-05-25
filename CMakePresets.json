@@ -1,0 +1,60 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "dev",
+      "displayName": "Dev (tests + compile_commands)",
+      "description": "Local development: tests enabled, compile_commands.json generated",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI",
+      "description": "Continuous integration: tests enabled, Release build",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS": "ON",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Release (engine only)",
+      "description": "Release build without tests",
+      "binaryDir": "${sourceDir}/build-release",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS": "OFF",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "plugin",
+      "displayName": "CLAP plugin (dev)",
+      "description": "Build the kairos-grid CLAP plugin with tests",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS":  "ON",
+        "KAIROS_GRID_BUILD_PLUGIN": "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev",     "configurePreset": "dev" },
+    { "name": "ci",      "configurePreset": "ci" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "plugin",  "configurePreset": "plugin" }
+  ],
+  "testPresets": [
+    { "name": "dev", "configurePreset": "dev", "output": { "outputOnFailure": true } },
+    { "name": "ci",  "configurePreset": "ci",  "output": { "outputOnFailure": true } }
+  ]
+}
