@@ -137,6 +137,23 @@ add_library(kairos-surge INTERFACE)
 add_library(kairos_grid::surge ALIAS kairos-surge)
 target_link_libraries(kairos-surge INTERFACE ${_surge_link_libs})
 
+# Force-include our globals.h shadow before any translation unit so the
+# include guard fires first; quoted #include "globals.h" in SurgeStorage.h
+# would otherwise find the source-adjacent original before our compat copy.
+# -fno-char8_t is required for C++20: SurgeStorage.h asserts u8string() ==
+# std::string, which is only true when char8_t is suppressed.
+# Both flags are safe and no-op in C++17.
+if(MSVC)
+    target_compile_options(kairos-surge INTERFACE
+        /FI"${CMAKE_CURRENT_SOURCE_DIR}/compat_include/globals.h"
+    )
+else()
+    target_compile_options(kairos-surge INTERFACE
+        -include "${CMAKE_CURRENT_SOURCE_DIR}/compat_include/globals.h"
+        -fno-char8_t
+    )
+endif()
+
 # juce_core.mm and juce_audio_formats.mm pull in macOS system frameworks.
 if(APPLE)
     target_link_libraries(kairos-surge INTERFACE

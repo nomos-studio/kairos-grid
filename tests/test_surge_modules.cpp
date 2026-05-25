@@ -64,8 +64,11 @@ TEST_CASE("ClassicOscModule: produces non-zero output for A4 after warm-up")
     REQUIRE(any_signal);
 }
 
-TEST_CASE("ClassicOscModule: output stays within ±5.5 V for typical inputs")
+TEST_CASE("ClassicOscModule: output is finite and bounded after warm-up")
 {
+    // Surge's classic oscillator can peak slightly above ±1.0 (BLIT synthesis
+    // artifact) before downstream gain / DC-blocking.  We scale by 5 V and
+    // allow ±6 V headroom (1.2× amplitude), matching surge-rack practice.
     auto  mod_ptr = std::make_unique<ClassicOscModule>();
     auto* mod     = mod_ptr.get();
 
@@ -77,19 +80,18 @@ TEST_CASE("ClassicOscModule: output stays within ±5.5 V for typical inputs")
 
     mod->inputs[0].voltage = 60.f;   // C4
 
-    bool in_range = true;
-    for (int i = 0; i < 4800; ++i)
+    bool finite  = true;
+    bool bounded = true;
+    for (int i = 0; i < 9600; ++i)
     {
         res->step_block(1);
         float out = mod->outputs[0].voltage;
         float aux = mod->outputs[1].voltage;
-        if (std::abs(out) > 5.5f || std::abs(aux) > 5.5f)
-        {
-            in_range = false;
-            break;
-        }
+        if (!std::isfinite(out) || !std::isfinite(aux))   { finite  = false; break; }
+        if (std::abs(out) > 6.f  || std::abs(aux) > 6.f) { bounded = false; break; }
     }
-    REQUIRE(in_range);
+    REQUIRE(finite);
+    REQUIRE(bounded);
 }
 
 // ---------------------------------------------------------------------------

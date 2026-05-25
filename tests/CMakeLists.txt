@@ -31,9 +31,8 @@ if(TARGET kairos_grid::surge-modules)
             Catch2::Catch2WithMain
     )
 
-    # Surge headers assert C++17 exactly and require -fno-char8_t in C++20.
     set_target_properties(kairos-grid-surge-tests PROPERTIES
-        CXX_STANDARD          17
+        CXX_STANDARD          20
         CXX_STANDARD_REQUIRED ON
         CXX_EXTENSIONS        OFF
     )
