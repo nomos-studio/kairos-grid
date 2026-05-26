@@ -282,3 +282,290 @@ TEST_CASE("GridEngine::module returns nullptr for out-of-range index") {
     REQUIRE(res->module(1) == nullptr);
     REQUIRE(res->module(-1) == nullptr);
 }
+
+// ---------------------------------------------------------------------------
+// Stub modules for tap / param-bus tests
+// ---------------------------------------------------------------------------
+
+// Declares one performance tap ("signal/level") and one named param input
+// ("control/gain"). Multiplies the named input by a fixed factor and writes
+// the result to the tap.
+class TapParamModule : public GridModule {
+  public:
+    explicit TapParamModule(float factor = 1.f)
+        : GridModule(1, 1), factor_(factor)
+    {
+        param_ports.push_back({"control/gain", 0});
+        taps.push_back({"signal/level", 0.f});
+    }
+
+    void process(const GridProcessArgs&) override {
+        const float v       = inputs[0].voltage * factor_;
+        outputs[0].voltage  = v;
+        taps[0].value       = v;
+    }
+
+  private:
+    float factor_;
+};
+
+// Declares two taps with different names.
+class DualTapModule : public GridModule {
+  public:
+    DualTapModule() : GridModule(0, 0) {
+        taps.push_back({"signal/alpha", 0.f});
+        taps.push_back({"signal/beta",  0.f});
+        alpha_val = 0.f;
+        beta_val  = 0.f;
+    }
+
+    void process(const GridProcessArgs&) override {
+        taps[0].value = alpha_val;
+        taps[1].value = beta_val;
+    }
+
+    float alpha_val;
+    float beta_val;
+};
+
+// ---------------------------------------------------------------------------
+// TapSchema / PortSchema discovery tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("tap_schema is empty for engine with no taps") {
+    GridGraph g;
+    g.add_module(std::make_unique<ConstModule>(1.f));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+
+    res->prepare(48000.f);
+    REQUIRE(res->tap_schema().size() == 0);
+    REQUIRE(res->tap_schema().entries.empty());
+}
+
+TEST_CASE("port_schema is empty for engine with no named param ports") {
+    GridGraph g;
+    g.add_module(std::make_unique<ConstModule>(1.f));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+
+    res->prepare(48000.f);
+    REQUIRE(res->port_schema().size() == 0);
+}
+
+TEST_CASE("tap_schema discovers one tap with correct name and id") {
+    GridGraph g;
+    g.add_module(std::make_unique<TapParamModule>());
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    const auto& ts = res->tap_schema();
+    REQUIRE(ts.size() == 1);
+    REQUIRE(ts.entries[0].id == 0);
+    REQUIRE(ts.entries[0].name == "signal/level");
+    REQUIRE(ts.entries[0].module_idx == 0);
+    REQUIRE(ts.entries[0].tap_idx == 0);
+}
+
+TEST_CASE("port_schema discovers one param port with correct name") {
+    GridGraph g;
+    g.add_module(std::make_unique<TapParamModule>());
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    const auto& ps = res->port_schema();
+    REQUIRE(ps.size() == 1);
+    REQUIRE(ps.entries[0].id == 0);
+    REQUIRE(ps.entries[0].name == "control/gain");
+    REQUIRE(ps.entries[0].port_idx == 0);
+}
+
+TEST_CASE("tap_schema discovers two taps from a dual-tap module") {
+    GridGraph g;
+    g.add_module(std::make_unique<DualTapModule>());
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    const auto& ts = res->tap_schema();
+    REQUIRE(ts.size() == 2);
+    REQUIRE(ts.entries[0].name == "signal/alpha");
+    REQUIRE(ts.entries[1].name == "signal/beta");
+    REQUIRE(ts.entries[0].id == 0);
+    REQUIRE(ts.entries[1].id == 1);
+}
+
+TEST_CASE("tap_schema aggregates taps across multiple modules") {
+    GridGraph g;
+    g.add_module(std::make_unique<TapParamModule>());  // 1 tap
+    g.add_module(std::make_unique<DualTapModule>());   // 2 taps
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    REQUIRE(res->tap_schema().size() == 3);
+    REQUIRE(res->port_schema().size() == 1); // only TapParamModule has a param port
+}
+
+// ---------------------------------------------------------------------------
+// Schema epoch tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("tap_schema epoch increments on each prepare()") {
+    GridGraph g;
+    g.add_module(std::make_unique<TapParamModule>());
+    auto res = g.build();
+    REQUIRE(res.has_value());
+
+    res->prepare(48000.f);
+    uint32_t epoch1 = res->tap_schema().epoch;
+
+    res->prepare(48000.f);
+    uint32_t epoch2 = res->tap_schema().epoch;
+
+    REQUIRE(epoch2 == epoch1 + 1);
+}
+
+TEST_CASE("tap_schema and port_schema share the same epoch after prepare()") {
+    GridGraph g;
+    g.add_module(std::make_unique<TapParamModule>());
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    REQUIRE(res->tap_schema().epoch == res->port_schema().epoch);
+}
+
+// ---------------------------------------------------------------------------
+// tap_frame() harvest tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("tap_frame is zero-initialised before first step_block") {
+    GridGraph g;
+    g.add_module(std::make_unique<TapParamModule>());
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    // tap_frame built by prepare(); modules haven't run yet.
+    const auto tf = res->tap_frame();
+    REQUIRE(tf.size() == 1);
+    REQUIRE_THAT(tf[0], Catch::Matchers::WithinAbs(0.f, 1e-9f));
+}
+
+TEST_CASE("tap_frame reflects tap value written during process()") {
+    auto* raw = new TapParamModule(1.f);
+    auto  ptr = std::unique_ptr<TapParamModule>(raw);
+
+    GridGraph g;
+    g.add_module(std::move(ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    // Drive the input directly (no named param needed here).
+    raw->inputs[0].voltage = 3.f;
+    res->step_block(1);
+
+    const auto tf = res->tap_frame();
+    REQUIRE(tf.size() == 1);
+    REQUIRE_THAT(tf[0], Catch::Matchers::WithinAbs(3.f, 1e-6f));
+}
+
+TEST_CASE("tap_frame size matches tap_schema size") {
+    GridGraph g;
+    g.add_module(std::make_unique<DualTapModule>());
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    REQUIRE(res->tap_frame().size() ==
+            static_cast<std::size_t>(res->tap_schema().size()));
+}
+
+TEST_CASE("tap_frame tracks two taps independently") {
+    auto* raw = new DualTapModule;
+    auto  ptr = std::unique_ptr<DualTapModule>(raw);
+
+    GridGraph g;
+    g.add_module(std::move(ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    raw->alpha_val = 0.25f;
+    raw->beta_val  = 0.75f;
+    res->step_block(1);
+
+    const auto tf = res->tap_frame();
+    REQUIRE_THAT(tf[0], Catch::Matchers::WithinAbs(0.25f, 1e-6f));
+    REQUIRE_THAT(tf[1], Catch::Matchers::WithinAbs(0.75f, 1e-6f));
+}
+
+// ---------------------------------------------------------------------------
+// apply_params() tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("apply_params writes named input port voltage") {
+    auto* raw = new TapParamModule(1.f);
+    auto  ptr = std::unique_ptr<TapParamModule>(raw);
+
+    GridGraph g;
+    g.add_module(std::move(ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    const std::array<float, 1> frame = {2.5f};
+    res->apply_params(frame);
+
+    REQUIRE_THAT(raw->inputs[0].voltage, Catch::Matchers::WithinAbs(2.5f, 1e-6f));
+}
+
+TEST_CASE("apply_params + step_block round-trip to tap_frame") {
+    GridGraph g;
+    g.add_module(std::make_unique<TapParamModule>(2.f));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    // apply_params sets input to 1.5; TapParamModule multiplies by factor 2 → tap = 3.0
+    const std::array<float, 1> frame = {1.5f};
+    res->apply_params(frame);
+    res->step_block(1);
+
+    REQUIRE_THAT(res->tap_frame()[0], Catch::Matchers::WithinAbs(3.f, 1e-6f));
+}
+
+TEST_CASE("apply_params with empty span is a no-op") {
+    auto* raw = new TapParamModule(1.f);
+    auto  ptr = std::unique_ptr<TapParamModule>(raw);
+    raw->inputs[0].voltage = 7.f;  // pre-set
+
+    GridGraph g;
+    g.add_module(std::move(ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    res->apply_params({});  // empty span — should not clear the port
+
+    // Input unchanged from the value we set before build.
+    // Note: prepare() doesn't zero ports, so the pre-set value survives.
+    REQUIRE_THAT(raw->inputs[0].voltage, Catch::Matchers::WithinAbs(7.f, 1e-6f));
+}
+
+TEST_CASE("apply_params ignores extra frame entries beyond port_schema size") {
+    GridGraph g;
+    g.add_module(std::make_unique<TapParamModule>());  // 1 named port
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    // 3 values, only 1 named port — should not crash, only first value applied.
+    const std::array<float, 3> frame = {4.f, 5.f, 6.f};
+    REQUIRE_NOTHROW(res->apply_params(frame));
+    REQUIRE(res->port_schema().size() == 1);
+}

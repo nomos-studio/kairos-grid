@@ -19,6 +19,7 @@ void GridEngine::prepare(float sample_rate) {
     for (auto& m : modules_) {
         m->prepare(args_);
     }
+    build_schemas();
 }
 
 void GridEngine::step_block(int n_frames) {
@@ -27,6 +28,7 @@ void GridEngine::step_block(int n_frames) {
         route_cables();
         ++args_.frame;
     }
+    harvest_taps();
 }
 
 GridModule* GridEngine::module(int idx) noexcept {
@@ -54,6 +56,55 @@ void GridEngine::route_cables() {
                 ->outputs[static_cast<std::size_t>(c.from_port)]
                 .voltage;
     }
+}
+
+void GridEngine::build_schemas() {
+    ++epoch_;
+
+    tap_schema_.entries.clear();
+    port_schema_.entries.clear();
+    tap_schema_.epoch  = epoch_;
+    port_schema_.epoch = epoch_;
+
+    for (int mi = 0; mi < static_cast<int>(modules_.size()); ++mi) {
+        const auto* m = modules_[static_cast<std::size_t>(mi)].get();
+
+        for (int ti = 0; ti < static_cast<int>(m->taps.size()); ++ti) {
+            int id = static_cast<int>(tap_schema_.entries.size());
+            tap_schema_.entries.push_back({id, m->taps[static_cast<std::size_t>(ti)].name, mi, ti});
+        }
+
+        for (int pi = 0; pi < static_cast<int>(m->param_ports.size()); ++pi) {
+            const auto& pp = m->param_ports[static_cast<std::size_t>(pi)];
+            int id = static_cast<int>(port_schema_.entries.size());
+            port_schema_.entries.push_back({id, pp.name, mi, pp.port_idx});
+        }
+    }
+
+    tap_frame_.assign(tap_schema_.entries.size(), 0.f);
+}
+
+void GridEngine::harvest_taps() {
+    for (const auto& e : tap_schema_.entries) {
+        tap_frame_[static_cast<std::size_t>(e.id)] =
+            modules_[static_cast<std::size_t>(e.module_idx)]
+                ->taps[static_cast<std::size_t>(e.tap_idx)].value;
+    }
+}
+
+void GridEngine::apply_params(std::span<const float> frame) {
+    const auto& entries = port_schema_.entries;
+    const int n = std::min(static_cast<int>(frame.size()),
+                           static_cast<int>(entries.size()));
+    for (int i = 0; i < n; ++i) {
+        const auto& e = entries[static_cast<std::size_t>(i)];
+        modules_[static_cast<std::size_t>(e.module_idx)]
+            ->inputs[static_cast<std::size_t>(e.port_idx)].voltage = frame[i];
+    }
+}
+
+std::span<const float> GridEngine::tap_frame() const noexcept {
+    return tap_frame_;
 }
 
 } // namespace kairos_grid

@@ -38,6 +38,42 @@ if(TARGET kairos_grid::surge-modules)
     )
 
     catch_discover_tests(kairos-grid-surge-tests)
+
+    add_executable(kairos-grid-surge-filter-tests
+        test_surge_filter_modules.cpp
+    )
+
+    target_link_libraries(kairos-grid-surge-filter-tests
+        PRIVATE
+            kairos_grid::surge-modules
+            Catch2::Catch2WithMain
+    )
+
+    set_target_properties(kairos-grid-surge-filter-tests PROPERTIES
+        CXX_STANDARD          20
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS        OFF
+    )
+
+    catch_discover_tests(kairos-grid-surge-filter-tests)
+
+    add_executable(kairos-grid-surge-effect-tests
+        test_surge_effect_modules.cpp
+    )
+
+    target_link_libraries(kairos-grid-surge-effect-tests
+        PRIVATE
+            kairos_grid::surge-modules
+            Catch2::Catch2WithMain
+    )
+
+    set_target_properties(kairos-grid-surge-effect-tests PROPERTIES
+        CXX_STANDARD          20
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS        OFF
+    )
+
+    catch_discover_tests(kairos-grid-surge-effect-tests)
 endif()
 
 # MI DSP tests — only built when kairos_grid::mi is available.

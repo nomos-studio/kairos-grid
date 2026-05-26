@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace kairos_grid {
@@ -16,6 +17,26 @@ namespace kairos_grid {
 // without changing the GridModule interface.
 struct GridPort {
     float voltage = 0.f;
+};
+
+// A performance tap — a named block-rate signal exposed to nomos-rt's
+// modulation tree. Written by the module during process(), harvested by
+// the engine at the end of each step_block() call.
+//
+// Tap naming convention: "namespace/signal", e.g. "signal/envelope",
+// "signal/gate". Diagnostic signals use the "debug/" namespace but are
+// registered separately (v1 deferred — performance taps only for now).
+struct TapPort {
+    std::string name;
+    float       value{0.f};
+};
+
+// Declaration that one of a module's input ports is addressable by name
+// via the param bus. nomos-rt writes named f32 values before each block;
+// apply_params() routes them to the corresponding input port voltages.
+struct ParamPort {
+    std::string name;
+    int         port_idx;  // index into inputs[]
 };
 
 // Per-sample timing context passed to every GridModule::process() call.
@@ -71,8 +92,16 @@ class GridModule {
     // Postcondition: outputs[] contain voltages to be routed downstream.
     virtual void process(const GridProcessArgs& args) = 0;
 
-    std::vector<GridPort> inputs;
-    std::vector<GridPort> outputs;
+    std::vector<GridPort>  inputs;
+    std::vector<GridPort>  outputs;
+
+    // Performance taps — declared by the module (typically in its constructor).
+    // The engine harvests these into the tap frame after each step_block().
+    std::vector<TapPort>   taps;
+
+    // Named param-bus inputs — declares which input ports are addressable
+    // by name via apply_params(). Populated in the constructor or prepare().
+    std::vector<ParamPort> param_ports;
 };
 
 } // namespace kairos_grid
