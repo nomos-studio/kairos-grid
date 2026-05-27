@@ -3,6 +3,7 @@ include(Catch)
 
 add_executable(kairos-grid-tests
     test_grid_engine.cpp
+    test_environment_module.cpp
 )
 
 target_link_libraries(kairos-grid-tests
