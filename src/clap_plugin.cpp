@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // CLAP entry point for kairos-grid — wraps GridEngine behind the CLAP ABI.
 //
-// v0 graph: EnvironmentModule only.
-//   - Audio I/O is a direct pass-through; no audio modules in the grid yet.
+// Graph: EnvironmentModule + AudioInputModule + AudioOutputModule.
+//   - AudioInput/Output bridge CLAP audio buffers to per-sample grid I/O.
 //   - Param bus (nomos-rt → grid) exposed as CLAP automatable parameters.
 //   - Transport and note events drive EnvironmentModule via the param frame.
 
+#include <kairos_grid/audio_modules.hpp>
 #include <kairos_grid/environment_module.hpp>
 #include <kairos_grid/grid_graph.hpp>
 
@@ -15,7 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
+#include <cstring>   // memcpy in stream helpers
 #include <optional>
 #include <vector>
 
@@ -123,25 +124,18 @@ class KairosGridPlugin {
             dispatch_event(hdr);
         }
 
+        // Route CLAP audio buffers into the grid before processing.
+        if (audio_in_ && proc->audio_inputs_count > 0)
+            audio_in_->set_buffers(proc->audio_inputs[0].data32,
+                                   proc->audio_inputs[0].channel_count,
+                                   proc->frames_count);
+        if (audio_out_ && proc->audio_outputs_count > 0)
+            audio_out_->set_buffers(proc->audio_outputs[0].data32,
+                                    proc->audio_outputs[0].channel_count,
+                                    proc->frames_count);
+
         engine_->apply_params(param_frame_);
         engine_->step_block(static_cast<int>(proc->frames_count));
-
-        // Direct audio pass-through — no audio modules in the grid for v0.
-        if (proc->audio_outputs_count > 0) {
-            auto& out = proc->audio_outputs[0];
-            if (proc->audio_inputs_count > 0) {
-                const auto& in = proc->audio_inputs[0];
-                const uint32_t ch = std::min(in.channel_count, out.channel_count);
-                for (uint32_t c = 0; c < ch; ++c)
-                    std::memcpy(out.data32[c], in.data32[c],
-                                proc->frames_count * sizeof(float));
-                for (uint32_t c = ch; c < out.channel_count; ++c)
-                    std::memset(out.data32[c], 0, proc->frames_count * sizeof(float));
-            } else {
-                for (uint32_t c = 0; c < out.channel_count; ++c)
-                    std::memset(out.data32[c], 0, proc->frames_count * sizeof(float));
-            }
-        }
 
         return CLAP_PROCESS_CONTINUE;
     }
@@ -343,9 +337,23 @@ class KairosGridPlugin {
     void build_engine(float sr) {
         GridGraph g;
         g.add_module(std::make_unique<EnvironmentModule>());
+
+        auto audio_in_up  = std::make_unique<AudioInputModule>();
+        auto audio_out_up = std::make_unique<AudioOutputModule>();
+        AudioInputModule*  raw_in  = audio_in_up.get();
+        AudioOutputModule* raw_out = audio_out_up.get();
+        const int in_idx  = g.add_module(std::move(audio_in_up));
+        const int out_idx = g.add_module(std::move(audio_out_up));
+
+        // Stereo pass-through cable — replaced by DSP modules in future graphs.
+        g.add_cable({in_idx, AudioInputModule::k_left,  out_idx, AudioOutputModule::k_left});
+        g.add_cable({in_idx, AudioInputModule::k_right, out_idx, AudioOutputModule::k_right});
+
         auto res = g.build();
         if (!res.has_value()) return;
-        engine_ = std::move(*res);
+        engine_    = std::move(*res);
+        audio_in_  = raw_in;
+        audio_out_ = raw_out;
         engine_->prepare(sr);
         param_frame_.assign(static_cast<std::size_t>(engine_->port_schema().size()), 0.f);
         cache_port_ids();
@@ -460,6 +468,8 @@ class KairosGridPlugin {
     [[maybe_unused]] const clap_host_t* host_;
     clap_plugin_t             clap_plugin_{};
     std::optional<GridEngine> engine_;
+    AudioInputModule*         audio_in_ {nullptr};
+    AudioOutputModule*        audio_out_{nullptr};
     std::vector<float>        param_frame_;
     float                     sample_rate_{48000.f};
 
