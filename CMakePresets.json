@@ -110,6 +110,7 @@
     { "name": "ci",       "configurePreset": "ci",       "output": { "outputOnFailure": true } },
     { "name": "ci-mi",    "configurePreset": "ci-mi",    "output": { "outputOnFailure": true } },
     { "name": "mi",       "configurePreset": "mi",       "output": { "outputOnFailure": true } },
+    { "name": "plugin",   "configurePreset": "plugin",   "output": { "outputOnFailure": true } },
     { "name": "surge",    "configurePreset": "surge",    "output": { "outputOnFailure": true } },
     { "name": "ci-surge", "configurePreset": "ci-surge", "output": { "outputOnFailure": true } }
   ]
