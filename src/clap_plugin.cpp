@@ -85,7 +85,11 @@ class KairosGridPlugin {
             build_engine(sample_rate_);
         else
             engine_->prepare(sample_rate_);
-        param_frame_.assign(static_cast<std::size_t>(engine_->port_schema().size()), 0.f);
+        // Preserve any state loaded before activate() (e.g. on project open).
+        // Only resize — and zero — if the schema size changed.
+        const auto new_size = static_cast<std::size_t>(engine_->port_schema().size());
+        if (param_frame_.size() != new_size)
+            param_frame_.assign(new_size, 0.f);
         cache_port_ids();
         return true;
     }
@@ -149,6 +153,7 @@ class KairosGridPlugin {
     const void* get_extension(const char* id) const {
         if (std::strcmp(id, CLAP_EXT_AUDIO_PORTS) == 0) return &s_audio_ports_ext;
         if (std::strcmp(id, CLAP_EXT_PARAMS)      == 0) return &s_params_ext;
+        if (std::strcmp(id, CLAP_EXT_STATE)        == 0) return &s_state_ext;
         return nullptr;
     }
 
@@ -238,6 +243,97 @@ class KairosGridPlugin {
                 self->dispatch_event(hdr);
         }
         self->engine_->apply_params(self->param_frame_);
+    }
+
+    // -----------------------------------------------------------------------
+    // State extension
+    //
+    // Binary format (all fields little-endian):
+    //   uint32_t  magic   = 0x4B475354  ('KGST')
+    //   uint32_t  version = 1
+    //   uint32_t  n_params
+    //   for each param:
+    //     uint32_t  name_len
+    //     char      name[name_len]   (no null terminator)
+    //     float     value
+    //
+    // load() matches saved entries against the current port_schema by name so
+    // it is robust to param additions or removals between saves.
+    // -----------------------------------------------------------------------
+
+    static bool stream_write_all(const clap_ostream_t* s, const void* buf, uint64_t n) {
+        const auto* p = static_cast<const uint8_t*>(buf);
+        uint64_t written = 0;
+        while (written < n) {
+            const int64_t r = s->write(s, p + written, n - written);
+            if (r <= 0) return false;
+            written += static_cast<uint64_t>(r);
+        }
+        return true;
+    }
+
+    static bool stream_read_all(const clap_istream_t* s, void* buf, uint64_t n) {
+        auto* p = static_cast<uint8_t*>(buf);
+        uint64_t done = 0;
+        while (done < n) {
+            const int64_t r = s->read(s, p + done, n - done);
+            if (r <= 0) return false;
+            done += static_cast<uint64_t>(r);
+        }
+        return true;
+    }
+
+    static bool state_save(const clap_plugin_t* p, const clap_ostream_t* s) {
+        const auto* self = cast(p);
+        if (!self->engine_.has_value()) return false;
+
+        constexpr uint32_t k_magic   = 0x4B475354u;
+        constexpr uint32_t k_version = 1u;
+        const auto& schema  = self->engine_->port_schema();
+        const auto  n_params = static_cast<uint32_t>(schema.size());
+
+        if (!stream_write_all(s, &k_magic,   sizeof(k_magic)))   return false;
+        if (!stream_write_all(s, &k_version, sizeof(k_version))) return false;
+        if (!stream_write_all(s, &n_params,  sizeof(n_params)))  return false;
+
+        for (const auto& e : schema.entries) {
+            const auto  name_len = static_cast<uint32_t>(e.name.size());
+            const float value    = (static_cast<std::size_t>(e.id) < self->param_frame_.size())
+                                       ? self->param_frame_[static_cast<std::size_t>(e.id)]
+                                       : 0.f;
+            if (!stream_write_all(s, &name_len,     sizeof(name_len))) return false;
+            if (name_len > 0 &&
+                !stream_write_all(s, e.name.data(), name_len))         return false;
+            if (!stream_write_all(s, &value,        sizeof(value)))    return false;
+        }
+        return true;
+    }
+
+    static bool state_load(const clap_plugin_t* p, const clap_istream_t* s) {
+        auto* self = cast_mut(p);
+        if (!self->engine_.has_value()) return false;
+
+        constexpr uint32_t k_magic   = 0x4B475354u;
+        constexpr uint32_t k_version = 1u;
+
+        uint32_t magic{}, version{}, n_params{};
+        if (!stream_read_all(s, &magic,    sizeof(magic)))    return false;
+        if (!stream_read_all(s, &version,  sizeof(version)))  return false;
+        if (magic != k_magic || version != k_version)         return false;
+        if (!stream_read_all(s, &n_params, sizeof(n_params))) return false;
+
+        std::string name_buf;
+        for (uint32_t i = 0; i < n_params; ++i) {
+            uint32_t name_len{};
+            if (!stream_read_all(s, &name_len, sizeof(name_len))) return false;
+            name_buf.resize(name_len);
+            if (name_len > 0 &&
+                !stream_read_all(s, name_buf.data(), name_len))   return false;
+            float value{};
+            if (!stream_read_all(s, &value, sizeof(value)))       return false;
+            self->set_param(self->find_port(name_buf.c_str()), value);
+        }
+        return true;
     }
 
     // -----------------------------------------------------------------------
@@ -355,6 +451,7 @@ class KairosGridPlugin {
 
     static const clap_plugin_audio_ports_t s_audio_ports_ext;
     static const clap_plugin_params_t      s_params_ext;
+    static const clap_plugin_state_t       s_state_ext;
 
     // -----------------------------------------------------------------------
     // Members
@@ -387,6 +484,11 @@ const clap_plugin_params_t KairosGridPlugin::s_params_ext = {
     .value_to_text  = &KairosGridPlugin::params_value_to_text,
     .text_to_value  = &KairosGridPlugin::params_text_to_value,
     .flush          = &KairosGridPlugin::params_flush,
+};
+
+const clap_plugin_state_t KairosGridPlugin::s_state_ext = {
+    .save = &KairosGridPlugin::state_save,
+    .load = &KairosGridPlugin::state_load,
 };
 
 // ---------------------------------------------------------------------------
