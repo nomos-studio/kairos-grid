@@ -122,10 +122,15 @@ endif() # KAIROS_GRID_BUILD_SURGE
 
 if(KAIROS_GRID_BUILD_PLUGIN AND KAIROS_GRID_BUILD_ENGINE)
 
-    FetchContent_Declare(clap
-        GIT_REPOSITORY https://github.com/free-audio/clap.git
-        GIT_TAG        1.2.6
-        GIT_SHALLOW    TRUE)
+    # Point CLAP_SRC_DIR at a local checkout to skip the network fetch:
+    #   cmake --preset plugin -DCLAP_SRC_DIR=/path/to/clap
+    if(DEFINED CLAP_SRC_DIR)
+        FetchContent_Declare(clap SOURCE_DIR "${CLAP_SRC_DIR}")
+    else()
+        FetchContent_Declare(clap
+            GIT_REPOSITORY https://github.com/free-audio/clap.git
+            GIT_TAG        1.2.6)
+    endif()
     FetchContent_MakeAvailable(clap)
 
     # CLAP plugin shared library.

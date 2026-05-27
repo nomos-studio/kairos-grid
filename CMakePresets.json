@@ -36,7 +36,7 @@
     {
       "name": "plugin",
       "displayName": "CLAP plugin (dev)",
-      "description": "Build the kairos-grid CLAP plugin with tests",
+      "description": "Build the kairos-grid CLAP plugin with tests. Set CLAP_SRC_DIR to skip network fetch.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
