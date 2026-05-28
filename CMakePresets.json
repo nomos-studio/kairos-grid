@@ -73,12 +73,13 @@
     {
       "name": "surge",
       "displayName": "Surge XT (dev)",
-      "description": "Dev build with Surge XT oscillator/filter/effect wrappers. Set SURGE_SRC_DIR to skip network fetch.",
+      "description": "Dev build with Surge XT wrappers. Set SURGE_SRC_DIR (and SURGE_SIMDE_PATH if external tree) to skip network fetch. PLUGIN disabled: Surge bundles its own clap target via clap-juce-extensions, which collides with the plugin preset's FetchContent clap.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "KAIROS_GRID_BUILD_TESTS":  "ON",
         "KAIROS_GRID_BUILD_SURGE":  "ON",
+        "KAIROS_GRID_BUILD_PLUGIN": "OFF",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "CMAKE_BUILD_TYPE": "Debug"
       }
@@ -86,11 +87,12 @@
     {
       "name": "ci-surge",
       "displayName": "CI + Surge XT",
-      "description": "CI Release build with Surge XT wrappers enabled. Set SURGE_SRC_DIR to skip network fetch.",
+      "description": "CI Release build with Surge XT wrappers. PLUGIN disabled: see surge preset description.",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "KAIROS_GRID_BUILD_TESTS":  "ON",
         "KAIROS_GRID_BUILD_SURGE":  "ON",
+        "KAIROS_GRID_BUILD_PLUGIN": "OFF",
         "CMAKE_BUILD_TYPE": "Release"
       }
     }
