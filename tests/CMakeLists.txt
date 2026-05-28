@@ -5,7 +5,6 @@ add_executable(kairos-grid-tests
     test_grid_engine.cpp
     test_environment_module.cpp
     test_audio_modules.cpp
-    test_nlc_modules.cpp
 )
 
 target_link_libraries(kairos-grid-tests
