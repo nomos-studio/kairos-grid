@@ -7,6 +7,7 @@
 //   - Transport and note events drive EnvironmentModule via the param frame.
 
 #include <kairos_grid/audio_modules.hpp>
+#include <kairos_grid/clap_kairos_tap_bus.h>
 #include <kairos_grid/environment_module.hpp>
 #include <kairos_grid/grid_graph.hpp>
 
@@ -92,6 +93,7 @@ class KairosGridPlugin {
         if (param_frame_.size() != new_size)
             param_frame_.assign(new_size, 0.f);
         cache_port_ids();
+        rebuild_tap_schema_c();
         return true;
     }
 
@@ -105,6 +107,7 @@ class KairosGridPlugin {
             engine_->prepare(sample_rate_);
         param_frame_.assign(static_cast<std::size_t>(
             engine_.has_value() ? engine_->port_schema().size() : 0), 0.f);
+        rebuild_tap_schema_c();
     }
 
     // -----------------------------------------------------------------------
@@ -145,9 +148,10 @@ class KairosGridPlugin {
     // -----------------------------------------------------------------------
 
     const void* get_extension(const char* id) const {
-        if (std::strcmp(id, CLAP_EXT_AUDIO_PORTS) == 0) return &s_audio_ports_ext;
-        if (std::strcmp(id, CLAP_EXT_PARAMS)      == 0) return &s_params_ext;
-        if (std::strcmp(id, CLAP_EXT_STATE)        == 0) return &s_state_ext;
+        if (std::strcmp(id, CLAP_EXT_AUDIO_PORTS)       == 0) return &s_audio_ports_ext;
+        if (std::strcmp(id, CLAP_EXT_PARAMS)             == 0) return &s_params_ext;
+        if (std::strcmp(id, CLAP_EXT_STATE)              == 0) return &s_state_ext;
+        if (std::strcmp(id, CLAP_EXT_KAIROS_TAP_BUS)    == 0) return &s_tap_bus_ext;
         return nullptr;
     }
 
@@ -331,6 +335,42 @@ class KairosGridPlugin {
     }
 
     // -----------------------------------------------------------------------
+    // kairos/tap-bus extension
+    // -----------------------------------------------------------------------
+
+    // Mirror the C++ TapSchema into C-ABI types.  Must be called after every
+    // engine_->prepare() so the C pointers stay in sync with the engine state.
+    void rebuild_tap_schema_c() {
+        if (!engine_.has_value()) {
+            tap_entries_c_.clear();
+            tap_schema_c_ = {0, 0, nullptr};
+            return;
+        }
+        const auto& ts = engine_->tap_schema();
+        tap_entries_c_.resize(ts.entries.size());
+        for (std::size_t i = 0; i < ts.entries.size(); ++i) {
+            tap_entries_c_[i].id   = static_cast<uint32_t>(ts.entries[i].id);
+            tap_entries_c_[i].name = ts.entries[i].name.c_str();
+        }
+        tap_schema_c_.epoch   = ts.epoch;
+        tap_schema_c_.count   = static_cast<uint32_t>(tap_entries_c_.size());
+        tap_schema_c_.entries = tap_entries_c_.empty() ? nullptr : tap_entries_c_.data();
+    }
+
+    static const clap_kairos_tap_schema_t* tap_bus_get_schema(const clap_plugin_t* p) {
+        return &cast(p)->tap_schema_c_;
+    }
+
+    static const float* tap_bus_get_tap_frame(const clap_plugin_t* p, uint32_t* out_count) {
+        const auto* self = cast(p);
+        *out_count = 0;
+        if (!self->engine_.has_value()) return nullptr;
+        const auto frame = self->engine_->tap_frame();
+        *out_count = static_cast<uint32_t>(frame.size());
+        return frame.data();
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -357,6 +397,7 @@ class KairosGridPlugin {
         engine_->prepare(sr);
         param_frame_.assign(static_cast<std::size_t>(engine_->port_schema().size()), 0.f);
         cache_port_ids();
+        rebuild_tap_schema_c();
     }
 
     void cache_port_ids() {
@@ -460,6 +501,7 @@ class KairosGridPlugin {
     static const clap_plugin_audio_ports_t s_audio_ports_ext;
     static const clap_plugin_params_t      s_params_ext;
     static const clap_plugin_state_t       s_state_ext;
+    static const clap_plugin_tap_bus_t     s_tap_bus_ext;
 
     // -----------------------------------------------------------------------
     // Members
@@ -472,6 +514,10 @@ class KairosGridPlugin {
     AudioOutputModule*        audio_out_{nullptr};
     std::vector<float>        param_frame_;
     float                     sample_rate_{48000.f};
+
+    // C-ABI tap schema snapshot — rebuilt after every engine_->prepare().
+    clap_kairos_tap_schema_t              tap_schema_c_{};
+    std::vector<clap_kairos_tap_entry_t>  tap_entries_c_;
 
     int env_tempo_id_    {-1};
     int env_beat_id_     {-1};
@@ -499,6 +545,11 @@ const clap_plugin_params_t KairosGridPlugin::s_params_ext = {
 const clap_plugin_state_t KairosGridPlugin::s_state_ext = {
     .save = &KairosGridPlugin::state_save,
     .load = &KairosGridPlugin::state_load,
+};
+
+const clap_plugin_tap_bus_t KairosGridPlugin::s_tap_bus_ext = {
+    .get_schema    = &KairosGridPlugin::tap_bus_get_schema,
+    .get_tap_frame = &KairosGridPlugin::tap_bus_get_tap_frame,
 };
 
 // ---------------------------------------------------------------------------

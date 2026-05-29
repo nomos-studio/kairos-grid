@@ -100,6 +100,7 @@ endif()
 if(TARGET clap)
     add_executable(kairos-grid-plugin-tests
         test_clap_plugin.cpp
+        test_tap_bus_ext.cpp
         ../src/clap_plugin.cpp
     )
 
