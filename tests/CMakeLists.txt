@@ -102,6 +102,7 @@ if(TARGET clap)
         test_clap_plugin.cpp
         test_tap_bus_ext.cpp
         test_param_bus_ext.cpp
+        test_patch_bus_ext.cpp
         ../src/clap_plugin.cpp
     )
 

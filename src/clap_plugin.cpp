@@ -5,9 +5,12 @@
 //   - AudioInput/Output bridge CLAP audio buffers to per-sample grid I/O.
 //   - Param bus (nomos-rt → grid) exposed as CLAP automatable parameters.
 //   - Transport and note events drive EnvironmentModule via the param frame.
+//   - patch-bus extension accepts EDN graph descriptors and swaps the engine
+//     atomically at the next process() block boundary.
 
 #include <kairos_grid/audio_modules.hpp>
 #include <kairos_grid/clap_kairos_param_bus.h>
+#include <kairos_grid/clap_kairos_patch_bus.h>
 #include <kairos_grid/clap_kairos_tap_bus.h>
 #include <kairos_grid/environment_module.hpp>
 #include <kairos_grid/grid_graph.hpp>
@@ -20,11 +23,16 @@
 #include <clap/clap.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>   // memcpy in stream helpers
+#include <cstring>
+#include <functional>
 #include <optional>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace kairos_grid {
@@ -51,6 +59,246 @@ static const clap_plugin_descriptor_t k_descriptor = {
     .description  = "Bitwig Grid-style modular engine with nomos-rt control plane",
     .features     = k_features,
 };
+
+// ---------------------------------------------------------------------------
+// Module registry
+//
+// Maps a type name string to a factory + optional post-construction setup
+// function.  The setup function receives the raw GridModule pointer and the
+// param-port name prefix (module type for v1).
+//
+// All built-in types are registered at first call via Meyers singleton.
+// ---------------------------------------------------------------------------
+
+struct ModuleSpec {
+    std::function<std::unique_ptr<GridModule>()>           make;
+    std::function<void(GridModule*, const std::string&)>   setup; // may be null
+};
+
+static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() {
+    static const std::unordered_map<std::string, ModuleSpec> reg = []() {
+        std::unordered_map<std::string, ModuleSpec> r;
+        r["env"]       = { []() -> std::unique_ptr<GridModule> { return std::make_unique<EnvironmentModule>(); }, nullptr };
+        r["audio-in"]  = { []() -> std::unique_ptr<GridModule> { return std::make_unique<AudioInputModule>();  }, nullptr };
+        r["audio-out"] = { []() -> std::unique_ptr<GridModule> { return std::make_unique<AudioOutputModule>(); }, nullptr };
+#if defined(KAIROS_GRID_PLUGIN_HAS_MI)
+        r["plaits"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::PlaitsModule>(); },
+            [](GridModule* m, const std::string& pfx) {
+                m->param_ports = {
+                    {pfx + "/harmonics", 1},
+                    {pfx + "/timbre",    2},
+                    {pfx + "/morph",     3},
+                    {pfx + "/engine",    6},
+                    {pfx + "/level",     5},
+                };
+            }
+        };
+        r["svf"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::SvfModule>(); },
+            [](GridModule* m, const std::string& pfx) {
+                m->param_ports = {
+                    {pfx + "/cutoff", 1},
+                    {pfx + "/q",      2},
+                };
+            }
+        };
+#endif
+        return r;
+    }();
+    return reg;
+}
+
+// ---------------------------------------------------------------------------
+// Minimal EDN patch descriptor parser (v1)
+//
+// Supported format:
+//   {:modules [{:type "t1"} {:type "t2"} ...]
+//    :cables  [[from-mod from-port to-mod to-port] ...]}
+//
+// Modules are indexed 0-based in the order they appear in :modules.
+// Cable integers are module indices (not keyword IDs).  Unknown keys are
+// ignored.  This is a forward-compatible subset — full EDN via edn-cpp later.
+// ---------------------------------------------------------------------------
+
+struct ParsedModule { std::string type; };
+struct ParsedCable  { int from_mod, from_port, to_mod, to_port; };
+struct ParsedPatch  {
+    std::vector<ParsedModule> modules;
+    std::vector<ParsedCable>  cables;
+};
+
+namespace {
+
+static std::size_t find_section_start(const std::string& s, const char* key, char open) {
+    const std::size_t kpos = s.find(key);
+    if (kpos == std::string::npos) return std::string::npos;
+    const std::size_t bpos = s.find(open, kpos + std::strlen(key));
+    return (bpos == std::string::npos) ? std::string::npos : bpos + 1;
+}
+
+static std::string extract_type(const std::string& s, std::size_t start, std::size_t end) {
+    const std::string k = ":type \"";
+    const std::size_t p = s.find(k, start);
+    if (p == std::string::npos || p >= end) return {};
+    const std::size_t vs = p + k.size();
+    const std::size_t ve = s.find('"', vs);
+    if (ve == std::string::npos || ve >= end) return {};
+    return s.substr(vs, ve - vs);
+}
+
+static bool scan_int(const std::string& s, std::size_t& pos, int& out) {
+    while (pos < s.size() &&
+           (s[pos] == ' ' || s[pos] == '\n' || s[pos] == '\r' || s[pos] == '\t' || s[pos] == ','))
+        ++pos;
+    if (pos >= s.size()) return false;
+    bool neg = (s[pos] == '-');
+    if (neg) ++pos;
+    if (pos >= s.size() || !std::isdigit(static_cast<unsigned char>(s[pos]))) return false;
+    int n = 0;
+    while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos])))
+        n = n * 10 + (s[pos++] - '0');
+    out = neg ? -n : n;
+    return true;
+}
+
+} // namespace
+
+static ParsedPatch parse_patch_edn(const char* edn_str, uint32_t len) {
+    ParsedPatch result;
+    if (!edn_str || len == 0) return result;
+    const std::string s(edn_str, len);
+
+    // Parse :modules [...]
+    const std::size_t mstart = find_section_start(s, ":modules", '[');
+    if (mstart != std::string::npos) {
+        std::size_t pos   = mstart;
+        int         depth = 1;
+        while (pos < s.size() && depth > 0) {
+            const char c = s[pos];
+            if (c == '[') { ++depth; ++pos; continue; }
+            if (c == ']') { if (--depth == 0) break; ++pos; continue; }
+            if (c == '{') {
+                const std::size_t map_start = pos;
+                int mdepth = 1;
+                ++pos;
+                while (pos < s.size() && mdepth > 0) {
+                    if (s[pos] == '{') ++mdepth;
+                    else if (s[pos] == '}') --mdepth;
+                    ++pos;
+                }
+                const std::string t = extract_type(s, map_start, pos);
+                if (!t.empty()) result.modules.push_back({t});
+            } else {
+                ++pos;
+            }
+        }
+    }
+
+    // Parse :cables [...]
+    const std::size_t cstart = find_section_start(s, ":cables", '[');
+    if (cstart != std::string::npos) {
+        std::size_t pos   = cstart;
+        int         depth = 1;
+        while (pos < s.size() && depth > 0) {
+            const char c = s[pos];
+            if (c == ']') { if (--depth == 0) break; ++pos; continue; }
+            if (c == '[') {
+                ++depth;
+                if (depth == 2) {
+                    ++pos; // skip past '['
+                    ParsedCable cable{};
+                    if (scan_int(s, pos, cable.from_mod)  &&
+                        scan_int(s, pos, cable.from_port) &&
+                        scan_int(s, pos, cable.to_mod)    &&
+                        scan_int(s, pos, cable.to_port))
+                        result.cables.push_back(cable);
+                    while (pos < s.size() && s[pos] != ']') ++pos;
+                    if (pos < s.size()) ++pos;
+                    --depth;
+                    continue;
+                }
+                ++pos;
+                continue;
+            }
+            ++pos;
+        }
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// PatchSlot — carries a fully-built GridEngine + auxiliary state.
+// Heap-allocated on the main thread, transferred to the audio thread atomically.
+// ---------------------------------------------------------------------------
+
+struct PatchSlot {
+    std::optional<GridEngine>  engine;
+    AudioInputModule*           audio_in{nullptr};
+    AudioOutputModule*          audio_out{nullptr};
+    std::vector<float>          param_frame;
+    int env_tempo_id{-1}, env_beat_id{-1}, env_bar_id{-1};
+    int env_playing_id{-1}, env_note_id{-1}, env_gate_id{-1};
+    int env_velocity_id{-1};
+};
+
+static PatchSlot* build_patch_slot(const ParsedPatch& patch, float sr) {
+    const auto& reg = get_module_registry();
+
+    GridGraph          g;
+    AudioInputModule*  audio_in  = nullptr;
+    AudioOutputModule* audio_out = nullptr;
+
+    for (const auto& pm : patch.modules) {
+        const auto it = reg.find(pm.type);
+        if (it == reg.end()) return nullptr;  // unknown type
+
+        auto mod = it->second.make();
+        GridModule* raw = mod.get();
+
+        if (pm.type == "audio-in")
+            audio_in  = static_cast<AudioInputModule*>(raw);
+        else if (pm.type == "audio-out")
+            audio_out = static_cast<AudioOutputModule*>(raw);
+
+        if (it->second.setup)
+            it->second.setup(raw, pm.type);
+
+        g.add_module(std::move(mod));
+    }
+
+    for (const auto& c : patch.cables)
+        g.add_cable({c.from_mod, c.from_port, c.to_mod, c.to_port});
+
+    auto res = g.build();
+    if (!res.has_value()) return nullptr;
+
+    auto* slot        = new PatchSlot{};
+    slot->engine      = std::move(*res);
+    slot->audio_in    = audio_in;
+    slot->audio_out   = audio_out;
+
+    slot->engine->prepare(sr);
+    slot->param_frame.assign(
+        static_cast<std::size_t>(slot->engine->port_schema().size()), 0.f);
+
+    const auto& schema = slot->engine->port_schema();
+    auto find = [&](const char* name) -> int {
+        for (const auto& e : schema.entries)
+            if (e.name == name) return e.id;
+        return -1;
+    };
+    slot->env_tempo_id    = find("env/tempo_hz");
+    slot->env_beat_id     = find("env/beat_phase");
+    slot->env_bar_id      = find("env/bar_phase");
+    slot->env_playing_id  = find("env/is_playing");
+    slot->env_note_id     = find("env/voice_note");
+    slot->env_gate_id     = find("env/voice_gate");
+    slot->env_velocity_id = find("env/voice_velocity");
+
+    return slot;
+}
 
 // ---------------------------------------------------------------------------
 // KairosGridPlugin — one instance per plugin instantiation
@@ -85,7 +333,11 @@ class KairosGridPlugin {
         return engine_.has_value();
     }
 
-    void destroy() { delete this; }
+    void destroy() {
+        PatchSlot* pending = pending_slot_.exchange(nullptr, std::memory_order_relaxed);
+        delete pending;
+        delete this;
+    }
 
     bool activate(double sample_rate, uint32_t /*min_frames*/, uint32_t /*max_frames*/) {
         sample_rate_ = static_cast<float>(sample_rate);
@@ -93,8 +345,6 @@ class KairosGridPlugin {
             build_engine(sample_rate_);
         else
             engine_->prepare(sample_rate_);
-        // Preserve any state loaded before activate() (e.g. on project open).
-        // Only resize — and zero — if the schema size changed.
         const auto new_size = static_cast<std::size_t>(engine_->port_schema().size());
         if (param_frame_.size() != new_size)
             param_frame_.assign(new_size, 0.f);
@@ -110,6 +360,7 @@ class KairosGridPlugin {
     void stop_processing()  {}
 
     void reset() {
+        try_install_pending_slot();
         if (engine_.has_value())
             engine_->prepare(sample_rate_);
         param_frame_.assign(static_cast<std::size_t>(
@@ -119,10 +370,68 @@ class KairosGridPlugin {
     }
 
     // -----------------------------------------------------------------------
+    // patch-bus: atomic hot-swap
+    //
+    // try_install_pending_slot() is called at the start of process() and reset()
+    // (both audio-thread contexts).  It atomically takes ownership of any slot
+    // built by push_patch_impl() on the main thread.
+    //
+    // Threading notes:
+    //   - pending_slot_ is exchanged with nullptr (acq_rel).  The exchange is
+    //     atomic; any concurrent push_patch_impl() stores will either see the
+    //     exchange or have their slot taken by a subsequent call.
+    //   - The old engine_ is destroyed during the move-assignment.  This is a
+    //     single block of heap frees (one per module); acceptable for an
+    //     infrequent patch-swap operation on a studio tool.
+    //   - C-ABI schema name pointers (c_str()) are rebuilt AFTER the engine
+    //     move to get stable pointers into the new engine's std::string storage.
+    // -----------------------------------------------------------------------
+
+    void try_install_pending_slot() {
+        PatchSlot* next = pending_slot_.exchange(nullptr, std::memory_order_acq_rel);
+        if (!next) return;
+
+        engine_          = std::move(next->engine);
+        audio_in_        = next->audio_in;
+        audio_out_       = next->audio_out;
+        param_frame_     = std::move(next->param_frame);
+        env_tempo_id_    = next->env_tempo_id;
+        env_beat_id_     = next->env_beat_id;
+        env_bar_id_      = next->env_bar_id;
+        env_playing_id_  = next->env_playing_id;
+        env_note_id_     = next->env_note_id;
+        env_gate_id_     = next->env_gate_id;
+        env_velocity_id_ = next->env_velocity_id;
+
+        // Rebuild C-ABI schemas now that engine_ is in its final location
+        rebuild_tap_schema_c();
+        rebuild_param_schema_c();
+
+        delete next;  // empty (moved-from) struct — one free()
+    }
+
+    bool push_patch_impl(const char* edn, uint32_t len) {
+        if (!edn || len == 0) return false;
+
+        const ParsedPatch parsed = parse_patch_edn(edn, len);
+        if (parsed.modules.empty()) return false;
+
+        PatchSlot* slot = build_patch_slot(parsed, sample_rate_);
+        if (!slot) return false;
+
+        current_edn_.assign(edn, len);
+
+        PatchSlot* old = pending_slot_.exchange(slot, std::memory_order_acq_rel);
+        delete old;  // dispose of any unprocessed pending slot (main thread)
+        return true;
+    }
+
+    // -----------------------------------------------------------------------
     // Audio + event processing
     // -----------------------------------------------------------------------
 
     clap_process_status process(const clap_process_t* proc) {
+        try_install_pending_slot();
         if (!engine_.has_value()) return CLAP_PROCESS_ERROR;
 
         if (proc->transport)
@@ -135,7 +444,6 @@ class KairosGridPlugin {
             dispatch_event(hdr);
         }
 
-        // Route CLAP audio buffers into the grid before processing.
         if (audio_in_ && proc->audio_inputs_count > 0)
             audio_in_->set_buffers(proc->audio_inputs[0].data32,
                                    proc->audio_inputs[0].channel_count,
@@ -156,11 +464,12 @@ class KairosGridPlugin {
     // -----------------------------------------------------------------------
 
     const void* get_extension(const char* id) const {
-        if (std::strcmp(id, CLAP_EXT_AUDIO_PORTS)       == 0) return &s_audio_ports_ext;
-        if (std::strcmp(id, CLAP_EXT_PARAMS)             == 0) return &s_params_ext;
-        if (std::strcmp(id, CLAP_EXT_STATE)              == 0) return &s_state_ext;
-        if (std::strcmp(id, CLAP_EXT_KAIROS_TAP_BUS)    == 0) return &s_tap_bus_ext;
-        if (std::strcmp(id, CLAP_EXT_KAIROS_PARAM_BUS)  == 0) return &s_param_bus_ext;
+        if (std::strcmp(id, CLAP_EXT_AUDIO_PORTS)      == 0) return &s_audio_ports_ext;
+        if (std::strcmp(id, CLAP_EXT_PARAMS)            == 0) return &s_params_ext;
+        if (std::strcmp(id, CLAP_EXT_STATE)             == 0) return &s_state_ext;
+        if (std::strcmp(id, CLAP_EXT_KAIROS_TAP_BUS)   == 0) return &s_tap_bus_ext;
+        if (std::strcmp(id, CLAP_EXT_KAIROS_PARAM_BUS) == 0) return &s_param_bus_ext;
+        if (std::strcmp(id, CLAP_EXT_KAIROS_PATCH_BUS) == 0) return &s_patch_bus_ext;
         return nullptr;
     }
 
@@ -263,9 +572,6 @@ class KairosGridPlugin {
     //     uint32_t  name_len
     //     char      name[name_len]   (no null terminator)
     //     float     value
-    //
-    // load() matches saved entries against the current port_schema by name so
-    // it is robust to param additions or removals between saves.
     // -----------------------------------------------------------------------
 
     static bool stream_write_all(const clap_ostream_t* s, const void* buf, uint64_t n) {
@@ -296,7 +602,7 @@ class KairosGridPlugin {
 
         constexpr uint32_t k_magic   = 0x4B475354u;
         constexpr uint32_t k_version = 1u;
-        const auto& schema  = self->engine_->port_schema();
+        const auto& schema   = self->engine_->port_schema();
         const auto  n_params = static_cast<uint32_t>(schema.size());
 
         if (!stream_write_all(s, &k_magic,   sizeof(k_magic)))   return false;
@@ -347,8 +653,6 @@ class KairosGridPlugin {
     // kairos/tap-bus extension
     // -----------------------------------------------------------------------
 
-    // Mirror the C++ TapSchema into C-ABI types.  Must be called after every
-    // engine_->prepare() so the C pointers stay in sync with the engine state.
     void rebuild_tap_schema_c() {
         if (!engine_.has_value()) {
             tap_entries_c_.clear();
@@ -415,6 +719,20 @@ class KairosGridPlugin {
     }
 
     // -----------------------------------------------------------------------
+    // kairos/patch-bus extension
+    // -----------------------------------------------------------------------
+
+    static bool patch_bus_push_patch(const clap_plugin_t* p,
+                                      const char* edn, uint32_t len) {
+        return cast_mut(p)->push_patch_impl(edn, len);
+    }
+
+    static const char* patch_bus_get_patch(const clap_plugin_t* p) {
+        const auto& edn = cast(p)->current_edn_;
+        return edn.empty() ? nullptr : edn.c_str();
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -427,7 +745,6 @@ class KairosGridPlugin {
         AudioOutputModule* raw_out = audio_out_up.get();
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_MI)
-        // MI voice: EnvironmentModule → Plaits → SVF → stereo output.
         const int env_idx = g.add_module(std::make_unique<EnvironmentModule>());
         [[maybe_unused]] const int in_idx  = g.add_module(std::move(audio_in_up));
         const int out_idx = g.add_module(std::move(audio_out_up));
@@ -441,7 +758,7 @@ class KairosGridPlugin {
         raw_plaits->param_ports.push_back({"plaits/timbre",    2});
         raw_plaits->param_ports.push_back({"plaits/morph",     3});
         raw_plaits->param_ports.push_back({"plaits/engine",    6});
-        raw_plaits->param_ports.push_back({"plaits/level",     5}); // LPG amplitude
+        raw_plaits->param_ports.push_back({"plaits/level",     5});
 
         raw_svf->param_ports.push_back({"svf/cutoff", 1});
         raw_svf->param_ports.push_back({"svf/q",      2});
@@ -449,12 +766,9 @@ class KairosGridPlugin {
         const int plaits_idx = g.add_module(std::move(plaits_up));
         const int svf_idx    = g.add_module(std::move(svf_up));
 
-        // Env → Plaits: note and gate
         g.add_cable({env_idx, EnvironmentModule::k_voice_note, plaits_idx, 0});
         g.add_cable({env_idx, EnvironmentModule::k_voice_gate, plaits_idx, 4});
-        // Plaits main out → SVF in
         g.add_cable({plaits_idx, 0, svf_idx, 0});
-        // SVF LP out → stereo output
         g.add_cable({svf_idx, 0, out_idx, AudioOutputModule::k_left});
         g.add_cable({svf_idx, 0, out_idx, AudioOutputModule::k_right});
 #else
@@ -462,7 +776,6 @@ class KairosGridPlugin {
         const int in_idx  = g.add_module(std::move(audio_in_up));
         const int out_idx = g.add_module(std::move(audio_out_up));
 
-        // Stereo pass-through — no DSP module linked.
         g.add_cable({in_idx, AudioInputModule::k_left,  out_idx, AudioOutputModule::k_left});
         g.add_cable({in_idx, AudioInputModule::k_right, out_idx, AudioOutputModule::k_right});
 #endif
@@ -480,7 +793,7 @@ class KairosGridPlugin {
         set_param(find_port("plaits/timbre"),    0.5f);
         set_param(find_port("plaits/morph"),     0.5f);
         set_param(find_port("plaits/engine"),    0.f);
-        set_param(find_port("plaits/level"),     1.f); // LPG fully open
+        set_param(find_port("plaits/level"),     1.f);
         set_param(find_port("svf/cutoff"),       0.35f);
         set_param(find_port("svf/q"),            0.1f);
 #endif
@@ -560,7 +873,7 @@ class KairosGridPlugin {
     }
 
     // -----------------------------------------------------------------------
-    // Trampolines (clap_plugin_t function pointers → member functions)
+    // Trampolines
     // -----------------------------------------------------------------------
 
     static const KairosGridPlugin* cast(const clap_plugin_t* p) {
@@ -593,6 +906,7 @@ class KairosGridPlugin {
     static const clap_plugin_state_t       s_state_ext;
     static const clap_plugin_tap_bus_t     s_tap_bus_ext;
     static const clap_plugin_param_bus_t   s_param_bus_ext;
+    static const clap_plugin_patch_bus_t   s_patch_bus_ext;
 
     // -----------------------------------------------------------------------
     // Members
@@ -605,13 +919,17 @@ class KairosGridPlugin {
     AudioOutputModule*        audio_out_{nullptr};
     std::vector<float>        param_frame_;
     float                     sample_rate_{48000.f};
+    std::string               current_edn_;   // main-thread only
 
-    // C-ABI tap schema snapshot — rebuilt after every engine_->prepare().
+    // Pending patch slot — written by main thread, consumed by audio thread
+    std::atomic<PatchSlot*>   pending_slot_{nullptr};
+
+    // C-ABI tap schema snapshot
     clap_kairos_tap_schema_t              tap_schema_c_{};
     std::vector<clap_kairos_tap_entry_t>  tap_entries_c_;
 
-    // C-ABI param schema snapshot — rebuilt after every engine_->prepare().
-    clap_kairos_param_schema_t            param_schema_c_{};
+    // C-ABI param schema snapshot
+    clap_kairos_param_schema_t             param_schema_c_{};
     std::vector<clap_kairos_param_entry_t> param_entries_c_;
 
     int env_tempo_id_    {-1};
@@ -650,6 +968,11 @@ const clap_plugin_tap_bus_t KairosGridPlugin::s_tap_bus_ext = {
 const clap_plugin_param_bus_t KairosGridPlugin::s_param_bus_ext = {
     .get_schema      = &KairosGridPlugin::param_bus_get_schema,
     .set_param_frame = &KairosGridPlugin::param_bus_set_param_frame,
+};
+
+const clap_plugin_patch_bus_t KairosGridPlugin::s_patch_bus_ext = {
+    .push_patch = &KairosGridPlugin::patch_bus_push_patch,
+    .get_patch  = &KairosGridPlugin::patch_bus_get_patch,
 };
 
 // ---------------------------------------------------------------------------
