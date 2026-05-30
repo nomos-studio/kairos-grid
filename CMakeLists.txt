@@ -16,6 +16,8 @@ project(kairos-grid
 # - Tests use Catch2 v3 (Boost Software License).
 # - eurorack (MI DSP) is a git submodule in libs/eurorack/ — see that
 #   directory's CMakeLists.txt and README for the platform shim details.
+# - nomos-topology: header-only schema constants; pin to a commit SHA.
+#   Set NOMOS_TOPOLOGY_SRC_DIR to a local checkout to skip the network fetch.
 # ---------------------------------------------------------------------------
 
 include(FetchContent)
@@ -33,6 +35,20 @@ option(KAIROS_GRID_BUILD_ENGINE "Build the sample-rate engine library" ON)
 option(KAIROS_GRID_BUILD_PLUGIN "Build the kairos-grid CLAP plugin"   OFF)
 option(KAIROS_GRID_BUILD_MI     "Build MI DSP module wrappers (Plaits, SVF, OnePole)" OFF)
 option(KAIROS_GRID_BUILD_SURGE  "Build Surge XT oscillator/filter/effect wrappers"    OFF)
+
+# ---------------------------------------------------------------------------
+# nomos-topology — header-only EDN key constants (nomos::topology).
+# Set NOMOS_TOPOLOGY_SRC_DIR to a local checkout to skip the network fetch.
+# ---------------------------------------------------------------------------
+
+if(DEFINED NOMOS_TOPOLOGY_SRC_DIR)
+    FetchContent_Declare(nomos_topology SOURCE_DIR "${NOMOS_TOPOLOGY_SRC_DIR}")
+else()
+    FetchContent_Declare(nomos_topology
+        GIT_REPOSITORY https://github.com/nomos-studio/nomos-topology.git
+        GIT_TAG        01eef2f14e61e62a93ada455ca2a47263a90f3c5)
+endif()
+FetchContent_MakeAvailable(nomos_topology)
 
 # ---------------------------------------------------------------------------
 # kairos-grid-engine — pure C++20 engine; no CLAP SDK dependency.
@@ -53,6 +69,11 @@ target_include_directories(kairos-grid-engine
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE
         src
+)
+
+target_link_libraries(kairos-grid-engine
+    PUBLIC
+        nomos::topology
 )
 
 set_target_properties(kairos-grid-engine PROPERTIES
