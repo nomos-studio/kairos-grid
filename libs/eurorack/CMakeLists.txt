@@ -72,6 +72,16 @@ target_compile_definitions(kairos-eurorack
         $<$<BOOL:${WIN32}>:_USE_MATH_DEFINES>
 )
 
+# Suppress third-party warnings that are irrelevant or ARM-host-specific.
+# stmlib uses ARM-target inline assembly (ssat/usat) that clang flags on Apple
+# Silicon when compiled for the host ABI; the code still runs correctly.
+target_compile_options(kairos-eurorack PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:
+        -Wno-asm-operand-widths
+        -Wno-unused-parameter
+    >
+)
+
 # Force-include the MSVC shim only on MSVC; GCC/Clang understand __attribute__.
 if(MSVC)
     target_compile_options(kairos-eurorack PRIVATE

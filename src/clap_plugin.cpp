@@ -12,6 +12,11 @@
 #include <kairos_grid/environment_module.hpp>
 #include <kairos_grid/grid_graph.hpp>
 
+#if defined(KAIROS_GRID_PLUGIN_HAS_MI)
+#include <kairos_grid/mi/plaits_module.hpp>
+#include <kairos_grid/mi/svf_module.hpp>
+#endif
+
 #include <clap/clap.h>
 
 #include <algorithm>
@@ -415,18 +420,52 @@ class KairosGridPlugin {
 
     void build_engine(float sr) {
         GridGraph g;
-        g.add_module(std::make_unique<EnvironmentModule>());
 
         auto audio_in_up  = std::make_unique<AudioInputModule>();
         auto audio_out_up = std::make_unique<AudioOutputModule>();
         AudioInputModule*  raw_in  = audio_in_up.get();
         AudioOutputModule* raw_out = audio_out_up.get();
+
+#if defined(KAIROS_GRID_PLUGIN_HAS_MI)
+        // MI voice: EnvironmentModule → Plaits → SVF → stereo output.
+        const int env_idx = g.add_module(std::make_unique<EnvironmentModule>());
+        [[maybe_unused]] const int in_idx  = g.add_module(std::move(audio_in_up));
+        const int out_idx = g.add_module(std::move(audio_out_up));
+
+        auto plaits_up = std::make_unique<mi::PlaitsModule>();
+        auto svf_up    = std::make_unique<mi::SvfModule>();
+        mi::PlaitsModule* raw_plaits = plaits_up.get();
+        mi::SvfModule*    raw_svf    = svf_up.get();
+
+        raw_plaits->param_ports.push_back({"plaits/harmonics", 1});
+        raw_plaits->param_ports.push_back({"plaits/timbre",    2});
+        raw_plaits->param_ports.push_back({"plaits/morph",     3});
+        raw_plaits->param_ports.push_back({"plaits/engine",    6});
+        raw_plaits->param_ports.push_back({"plaits/level",     5}); // LPG amplitude
+
+        raw_svf->param_ports.push_back({"svf/cutoff", 1});
+        raw_svf->param_ports.push_back({"svf/q",      2});
+
+        const int plaits_idx = g.add_module(std::move(plaits_up));
+        const int svf_idx    = g.add_module(std::move(svf_up));
+
+        // Env → Plaits: note and gate
+        g.add_cable({env_idx, EnvironmentModule::k_voice_note, plaits_idx, 0});
+        g.add_cable({env_idx, EnvironmentModule::k_voice_gate, plaits_idx, 4});
+        // Plaits main out → SVF in
+        g.add_cable({plaits_idx, 0, svf_idx, 0});
+        // SVF LP out → stereo output
+        g.add_cable({svf_idx, 0, out_idx, AudioOutputModule::k_left});
+        g.add_cable({svf_idx, 0, out_idx, AudioOutputModule::k_right});
+#else
+        g.add_module(std::make_unique<EnvironmentModule>());
         const int in_idx  = g.add_module(std::move(audio_in_up));
         const int out_idx = g.add_module(std::move(audio_out_up));
 
-        // Stereo pass-through cable — replaced by DSP modules in future graphs.
+        // Stereo pass-through — no DSP module linked.
         g.add_cable({in_idx, AudioInputModule::k_left,  out_idx, AudioOutputModule::k_left});
         g.add_cable({in_idx, AudioInputModule::k_right, out_idx, AudioOutputModule::k_right});
+#endif
 
         auto res = g.build();
         if (!res.has_value()) return;
@@ -435,6 +474,17 @@ class KairosGridPlugin {
         audio_out_ = raw_out;
         engine_->prepare(sr);
         param_frame_.assign(static_cast<std::size_t>(engine_->port_schema().size()), 0.f);
+
+#if defined(KAIROS_GRID_PLUGIN_HAS_MI)
+        set_param(find_port("plaits/harmonics"), 0.5f);
+        set_param(find_port("plaits/timbre"),    0.5f);
+        set_param(find_port("plaits/morph"),     0.5f);
+        set_param(find_port("plaits/engine"),    0.f);
+        set_param(find_port("plaits/level"),     1.f); // LPG fully open
+        set_param(find_port("svf/cutoff"),       0.35f);
+        set_param(find_port("svf/q"),            0.1f);
+#endif
+
         cache_port_ids();
         rebuild_tap_schema_c();
         rebuild_param_schema_c();

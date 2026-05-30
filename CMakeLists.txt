@@ -71,6 +71,24 @@ endif()
 endif() # KAIROS_GRID_BUILD_ENGINE
 
 # ---------------------------------------------------------------------------
+# CLAP SDK — declared here, before MI and Surge, so that Surge's
+# clap-juce-extensions dependency sees an already-populated FetchContent
+# entry and skips its own fetch.  The `clap` INTERFACE target is created
+# exactly once; the PLUGIN block below just uses it.
+# ---------------------------------------------------------------------------
+
+if(KAIROS_GRID_BUILD_PLUGIN OR KAIROS_GRID_BUILD_SURGE)
+    if(DEFINED CLAP_SRC_DIR)
+        FetchContent_Declare(clap SOURCE_DIR "${CLAP_SRC_DIR}")
+    else()
+        FetchContent_Declare(clap
+            GIT_REPOSITORY https://github.com/free-audio/clap.git
+            GIT_TAG        1.2.6)
+    endif()
+    FetchContent_MakeAvailable(clap)
+endif()
+
+# ---------------------------------------------------------------------------
 # MI DSP wrappers — Plaits macro-oscillator, stmlib SVF, OnePole.
 # Requires the eurorack static library (GPL-3.0, MIT code within).
 # ---------------------------------------------------------------------------
@@ -122,16 +140,8 @@ endif() # KAIROS_GRID_BUILD_SURGE
 
 if(KAIROS_GRID_BUILD_PLUGIN AND KAIROS_GRID_BUILD_ENGINE)
 
-    # Point CLAP_SRC_DIR at a local checkout to skip the network fetch:
-    #   cmake --preset plugin -DCLAP_SRC_DIR=/path/to/clap
-    if(DEFINED CLAP_SRC_DIR)
-        FetchContent_Declare(clap SOURCE_DIR "${CLAP_SRC_DIR}")
-    else()
-        FetchContent_Declare(clap
-            GIT_REPOSITORY https://github.com/free-audio/clap.git
-            GIT_TAG        1.2.6)
-    endif()
-    FetchContent_MakeAvailable(clap)
+    # CLAP is already declared and made available at the top of this file.
+    # No FetchContent call needed here.
 
     # CLAP plugin shared library.
     add_library(kairos-grid MODULE
@@ -150,6 +160,20 @@ if(KAIROS_GRID_BUILD_PLUGIN AND KAIROS_GRID_BUILD_ENGINE)
         kairos_grid::engine
         clap
     )
+
+    # Link MI DSP wrappers into the plugin when both are enabled.
+    # clap_plugin.cpp detects availability via KAIROS_GRID_PLUGIN_HAS_MI.
+    if(TARGET kairos_grid::mi)
+        target_link_libraries(kairos-grid PRIVATE kairos_grid::mi)
+        target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_MI=1)
+    endif()
+
+    # Link Surge XT wrappers into the plugin when both are enabled.
+    # clap_plugin.cpp detects availability via KAIROS_GRID_PLUGIN_HAS_SURGE.
+    if(TARGET kairos_grid::surge-modules)
+        target_link_libraries(kairos-grid PRIVATE kairos_grid::surge-modules)
+        target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_SURGE=1)
+    endif()
 
     if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         target_compile_options(kairos-grid PRIVATE

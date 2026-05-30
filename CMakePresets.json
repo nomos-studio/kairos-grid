@@ -95,25 +95,41 @@
         "KAIROS_GRID_BUILD_PLUGIN": "OFF",
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "plugin-mi",
+      "displayName": "CLAP plugin + MI modules (dev)",
+      "description": "Build the kairos-grid CLAP plugin with MI DSP (Plaits, SVF) linked in. Set EURORACK_SRC_DIR to skip network fetch.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS":  "ON",
+        "KAIROS_GRID_BUILD_PLUGIN": "ON",
+        "KAIROS_GRID_BUILD_MI":     "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "dev",      "configurePreset": "dev" },
-    { "name": "ci",       "configurePreset": "ci" },
-    { "name": "ci-mi",    "configurePreset": "ci-mi" },
-    { "name": "release",  "configurePreset": "release" },
-    { "name": "plugin",   "configurePreset": "plugin" },
-    { "name": "mi",       "configurePreset": "mi" },
-    { "name": "surge",    "configurePreset": "surge" },
-    { "name": "ci-surge", "configurePreset": "ci-surge" }
+    { "name": "dev",       "configurePreset": "dev" },
+    { "name": "ci",        "configurePreset": "ci" },
+    { "name": "ci-mi",     "configurePreset": "ci-mi" },
+    { "name": "release",   "configurePreset": "release" },
+    { "name": "plugin",    "configurePreset": "plugin" },
+    { "name": "mi",        "configurePreset": "mi" },
+    { "name": "surge",     "configurePreset": "surge" },
+    { "name": "ci-surge",  "configurePreset": "ci-surge" },
+    { "name": "plugin-mi", "configurePreset": "plugin-mi" }
   ],
   "testPresets": [
-    { "name": "dev",      "configurePreset": "dev",      "output": { "outputOnFailure": true } },
-    { "name": "ci",       "configurePreset": "ci",       "output": { "outputOnFailure": true } },
-    { "name": "ci-mi",    "configurePreset": "ci-mi",    "output": { "outputOnFailure": true } },
-    { "name": "mi",       "configurePreset": "mi",       "output": { "outputOnFailure": true } },
-    { "name": "plugin",   "configurePreset": "plugin",   "output": { "outputOnFailure": true } },
-    { "name": "surge",    "configurePreset": "surge",    "output": { "outputOnFailure": true } },
-    { "name": "ci-surge", "configurePreset": "ci-surge", "output": { "outputOnFailure": true } }
+    { "name": "dev",       "configurePreset": "dev",       "output": { "outputOnFailure": true } },
+    { "name": "ci",        "configurePreset": "ci",        "output": { "outputOnFailure": true } },
+    { "name": "ci-mi",     "configurePreset": "ci-mi",     "output": { "outputOnFailure": true } },
+    { "name": "mi",        "configurePreset": "mi",        "output": { "outputOnFailure": true } },
+    { "name": "plugin",    "configurePreset": "plugin",    "output": { "outputOnFailure": true } },
+    { "name": "surge",     "configurePreset": "surge",     "output": { "outputOnFailure": true } },
+    { "name": "ci-surge",  "configurePreset": "ci-surge",  "output": { "outputOnFailure": true } },
+    { "name": "plugin-mi", "configurePreset": "plugin-mi", "output": { "outputOnFailure": true } }
   ]
 }

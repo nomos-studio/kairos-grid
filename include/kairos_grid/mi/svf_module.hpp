@@ -14,7 +14,20 @@
 
 #include <kairos_grid/grid_module.hpp>
 
+#if defined(__clang__)
+#  pragma clang diagnostic push
+#  pragma clang diagnostic ignored "-Wasm-operand-widths"
+#  pragma clang diagnostic ignored "-Wunused-parameter"
+#elif defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wunused-parameter"
+#endif
 #include <stmlib/dsp/filter.h>
+#if defined(__clang__)
+#  pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
 
 namespace kairos_grid::mi {
 

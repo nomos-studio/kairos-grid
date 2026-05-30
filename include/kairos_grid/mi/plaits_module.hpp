@@ -22,8 +22,25 @@
 
 #include <kairos_grid/grid_module.hpp>
 
+// stmlib uses ARM-target inline assembly that clang flags on Apple Silicon host
+// builds; suppress those diagnostics when including the MI headers.
+#if defined(__clang__)
+#  pragma clang diagnostic push
+#  pragma clang diagnostic ignored "-Wasm-operand-widths"
+#  pragma clang diagnostic ignored "-Wunused-parameter"
+#  pragma clang diagnostic ignored "-Wunused-local-typedef"
+#elif defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wunused-parameter"
+#  pragma GCC diagnostic ignored "-Wunused-local-typedefs"
+#endif
 #include <plaits/dsp/voice.h>
 #include <stmlib/utils/buffer_allocator.h>
+#if defined(__clang__)
+#  pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#endif
 
 namespace kairos_grid::mi {
 
