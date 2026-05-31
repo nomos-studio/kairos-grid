@@ -20,6 +20,10 @@
 #include <kairos_grid/mi/svf_module.hpp>
 #endif
 
+#if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
+#include <kairos_grid/wasm_grid_module.hpp>
+#endif
+
 #include <clap/clap.h>
 
 #include <algorithm>
@@ -71,16 +75,19 @@ static const clap_plugin_descriptor_t k_descriptor = {
 // ---------------------------------------------------------------------------
 
 struct ModuleSpec {
-    std::function<std::unique_ptr<GridModule>()>           make;
-    std::function<void(GridModule*, const std::string&)>   setup; // may be null
+    std::function<std::unique_ptr<GridModule>()>                         make;
+    std::function<void(GridModule*, const std::string&)>                 setup;
+    // For modules whose factory needs a runtime argument (e.g. wasm_path):
+    std::function<std::unique_ptr<GridModule>(const std::string&)>       make_with_args;
+    std::function<void(GridModule*, const std::string&, const std::string&)> setup_with_args;
 };
 
 static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() {
     static const std::unordered_map<std::string, ModuleSpec> reg = []() {
         std::unordered_map<std::string, ModuleSpec> r;
-        r["env"]       = { []() -> std::unique_ptr<GridModule> { return std::make_unique<EnvironmentModule>(); }, nullptr };
-        r["audio-in"]  = { []() -> std::unique_ptr<GridModule> { return std::make_unique<AudioInputModule>();  }, nullptr };
-        r["audio-out"] = { []() -> std::unique_ptr<GridModule> { return std::make_unique<AudioOutputModule>(); }, nullptr };
+        r["env"]       = { []() -> std::unique_ptr<GridModule> { return std::make_unique<EnvironmentModule>(); }, nullptr, nullptr, nullptr };
+        r["audio-in"]  = { []() -> std::unique_ptr<GridModule> { return std::make_unique<AudioInputModule>();  }, nullptr, nullptr, nullptr };
+        r["audio-out"] = { []() -> std::unique_ptr<GridModule> { return std::make_unique<AudioOutputModule>(); }, nullptr, nullptr, nullptr };
 #if defined(KAIROS_GRID_PLUGIN_HAS_MI)
         r["plaits"] = {
             []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::PlaitsModule>(); },
@@ -92,7 +99,8 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
                     {pfx + "/engine",    6},
                     {pfx + "/level",     5},
                 };
-            }
+            },
+            nullptr, nullptr
         };
         r["svf"] = {
             []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::SvfModule>(); },
@@ -101,6 +109,20 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
                     {pfx + "/cutoff", 1},
                     {pfx + "/q",      2},
                 };
+            },
+            nullptr, nullptr
+        };
+#endif
+#if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
+        r["wasm"] = {
+            nullptr, // make (unused — wasm uses make_with_args)
+            nullptr, // setup (unused — wasm uses setup_with_args)
+            [](const std::string& wasm_path) -> std::unique_ptr<GridModule> {
+                return WasmGridModule::create(wasm_path);
+            },
+            [](GridModule* m, const std::string& /*type*/, const std::string& stem) {
+                for (auto& pp : m->param_ports)
+                    pp.name = stem + "/" + pp.name;
             }
         };
 #endif
@@ -121,7 +143,7 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
 // ignored.  This is a forward-compatible subset — full EDN via edn-cpp later.
 // ---------------------------------------------------------------------------
 
-struct ParsedModule { std::string type; };
+struct ParsedModule { std::string type; std::string wasm_path; };
 struct ParsedCable  { int from_mod, from_port, to_mod, to_port; };
 struct ParsedPatch  {
     std::vector<ParsedModule> modules;
@@ -137,14 +159,19 @@ static std::size_t find_section_start(const std::string& s, const char* key, cha
     return (bpos == std::string::npos) ? std::string::npos : bpos + 1;
 }
 
-static std::string extract_type(const std::string& s, std::size_t start, std::size_t end) {
-    const std::string k = ":type \"";
+static std::string extract_str_field(const std::string& s, const char* edn_key,
+                                       std::size_t start, std::size_t end) {
+    const std::string k = std::string(edn_key) + " \"";
     const std::size_t p = s.find(k, start);
     if (p == std::string::npos || p >= end) return {};
     const std::size_t vs = p + k.size();
     const std::size_t ve = s.find('"', vs);
     if (ve == std::string::npos || ve >= end) return {};
     return s.substr(vs, ve - vs);
+}
+
+static std::string extract_type(const std::string& s, std::size_t start, std::size_t end) {
+    return extract_str_field(s, ":type", start, end);
 }
 
 static bool scan_int(const std::string& s, std::size_t& pos, int& out) {
@@ -188,7 +215,10 @@ static ParsedPatch parse_patch_edn(const char* edn_str, uint32_t len) {
                     ++pos;
                 }
                 const std::string t = extract_type(s, map_start, pos);
-                if (!t.empty()) result.modules.push_back({t});
+                if (!t.empty()) {
+                    const std::string wp = extract_str_field(s, ":wasm-path", map_start, pos);
+                    result.modules.push_back({t, wp});
+                }
             } else {
                 ++pos;
             }
@@ -243,6 +273,15 @@ struct PatchSlot {
     int env_velocity_id{-1};
 };
 
+// Extract the filename stem (no directory, no extension) from a path.
+static std::string stem_from_path(const std::string& path) {
+    const auto slash = path.rfind('/');
+    const auto start = (slash == std::string::npos) ? 0u : slash + 1u;
+    const auto dot   = path.rfind('.');
+    const auto end   = (dot == std::string::npos || dot < start) ? path.size() : dot;
+    return path.substr(start, end - start);
+}
+
 static PatchSlot* build_patch_slot(const ParsedPatch& patch, float sr) {
     const auto& reg = get_module_registry();
 
@@ -254,7 +293,13 @@ static PatchSlot* build_patch_slot(const ParsedPatch& patch, float sr) {
         const auto it = reg.find(pm.type);
         if (it == reg.end()) return nullptr;  // unknown type
 
-        auto mod = it->second.make();
+        std::unique_ptr<GridModule> mod;
+        if (it->second.make_with_args)
+            mod = it->second.make_with_args(pm.wasm_path);
+        else
+            mod = it->second.make();
+        if (!mod) return nullptr;
+
         GridModule* raw = mod.get();
 
         if (pm.type == "audio-in")
@@ -262,7 +307,9 @@ static PatchSlot* build_patch_slot(const ParsedPatch& patch, float sr) {
         else if (pm.type == "audio-out")
             audio_out = static_cast<AudioOutputModule*>(raw);
 
-        if (it->second.setup)
+        if (it->second.setup_with_args)
+            it->second.setup_with_args(raw, pm.type, stem_from_path(pm.wasm_path));
+        else if (it->second.setup)
             it->second.setup(raw, pm.type);
 
         g.add_module(std::move(mod));

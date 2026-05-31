@@ -122,6 +122,27 @@ if(TARGET clap)
     catch_discover_tests(kairos-grid-plugin-tests)
 endif()
 
+# WASM module tests — only built when kairos_grid::wasm is available.
+if(TARGET kairos_grid::wasm)
+    add_executable(kairos-grid-wasm-tests
+        test_wasm_module.cpp
+    )
+
+    target_link_libraries(kairos-grid-wasm-tests
+        PRIVATE
+            kairos_grid::wasm
+            Catch2::Catch2WithMain
+    )
+
+    set_target_properties(kairos-grid-wasm-tests PROPERTIES
+        CXX_STANDARD          20
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS        OFF
+    )
+
+    catch_discover_tests(kairos-grid-wasm-tests)
+endif()
+
 # MI DSP tests — only built when kairos_grid::mi is available.
 if(TARGET kairos_grid::mi)
     add_executable(kairos-grid-mi-tests

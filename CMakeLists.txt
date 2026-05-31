@@ -35,6 +35,7 @@ option(KAIROS_GRID_BUILD_ENGINE "Build the sample-rate engine library" ON)
 option(KAIROS_GRID_BUILD_PLUGIN "Build the kairos-grid CLAP plugin"   OFF)
 option(KAIROS_GRID_BUILD_MI     "Build MI DSP module wrappers (Plaits, SVF, OnePole)" OFF)
 option(KAIROS_GRID_BUILD_SURGE  "Build Surge XT oscillator/filter/effect wrappers"    OFF)
+option(KAIROS_GRID_BUILD_WASM   "Build Faust WASM module support (requires wasmtime)" OFF)
 
 # ---------------------------------------------------------------------------
 # nomos-topology — header-only EDN key constants (nomos::topology).
@@ -108,6 +109,82 @@ if(KAIROS_GRID_BUILD_PLUGIN OR KAIROS_GRID_BUILD_SURGE)
     endif()
     FetchContent_MakeAvailable(clap)
 endif()
+
+# ---------------------------------------------------------------------------
+# wasmtime C API — pre-built binaries, downloaded only when KAIROS_GRID_BUILD_WASM=ON.
+#
+# Platform detection and versioning mirrors kairos/CMakeLists.txt; keep them
+# in sync when updating the wasmtime version.
+# ---------------------------------------------------------------------------
+
+if(KAIROS_GRID_BUILD_WASM AND KAIROS_GRID_BUILD_ENGINE)
+
+    set(_wasmtime_ver "v44.0.1")
+
+    if(APPLE)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(_wasmtime_platform "aarch64-macos")
+            set(_wasmtime_hash "SHA256=5da6d09fa6340db6d7afc8b73d189eff4973825c9a6fa5e814d2f9b1ddfd8998")
+        else()
+            set(_wasmtime_platform "x86_64-macos")
+            set(_wasmtime_hash "SHA256=8a3877178c50a2a2a20fcb94ca86efd14ba4376698e48a509f72bc52e961ce49")
+        endif()
+    else()
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(_wasmtime_platform "aarch64-linux")
+            set(_wasmtime_hash "SHA256=5b4614a311c7c391fb1fc5e9c7ab3782f5a441f9e1fa0cc60fe364ff5371c010")
+        else()
+            set(_wasmtime_platform "x86_64-linux")
+            set(_wasmtime_hash "SHA256=fe9b4bfa87724054cebcc09b83a17d5ded66a465054b77c8de0ebc166ad78d7a")
+        endif()
+    endif()
+
+    set(_wasmtime_name "wasmtime-${_wasmtime_ver}-${_wasmtime_platform}-c-api")
+    FetchContent_Declare(wasmtime_grid
+        URL "https://github.com/bytecodealliance/wasmtime/releases/download/${_wasmtime_ver}/${_wasmtime_name}.tar.xz"
+        URL_HASH "${_wasmtime_hash}")
+    FetchContent_MakeAvailable(wasmtime_grid)
+
+    add_library(kairos-grid-wasmtime INTERFACE)
+    target_include_directories(kairos-grid-wasmtime INTERFACE
+        "${wasmtime_grid_SOURCE_DIR}/include")
+    target_link_libraries(kairos-grid-wasmtime INTERFACE
+        "${wasmtime_grid_SOURCE_DIR}/lib/libwasmtime.a")
+    if(APPLE)
+        target_link_libraries(kairos-grid-wasmtime INTERFACE
+            "-framework Security" "-framework CoreFoundation" "-framework SystemConfiguration")
+    else()
+        target_link_libraries(kairos-grid-wasmtime INTERFACE pthread dl)
+    endif()
+
+    # Static library carrying WasmGridModule; links against the engine + wasmtime.
+    add_library(kairos-grid-wasm STATIC
+        src/wasm_grid_module.cpp
+    )
+    add_library(kairos_grid::wasm ALIAS kairos-grid-wasm)
+
+    # wasmtime is PUBLIC so that consumers (plugin, tests) get libwasmtime.a
+    # transitively without having to repeat the link dependency.
+    target_link_libraries(kairos-grid-wasm
+        PUBLIC
+            kairos_grid::engine
+            kairos-grid-wasmtime
+    )
+
+    set_target_properties(kairos-grid-wasm PROPERTIES
+        CXX_STANDARD          20
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS        OFF
+    )
+
+    if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+        target_compile_options(kairos-grid-wasm PRIVATE
+            $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall -Wextra -Wpedantic -Werror>
+            $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX>
+        )
+    endif()
+
+endif() # KAIROS_GRID_BUILD_WASM
 
 # ---------------------------------------------------------------------------
 # MI DSP wrappers — Plaits macro-oscillator, stmlib SVF, OnePole.
@@ -194,6 +271,13 @@ if(KAIROS_GRID_BUILD_PLUGIN AND KAIROS_GRID_BUILD_ENGINE)
     if(TARGET kairos_grid::surge-modules)
         target_link_libraries(kairos-grid PRIVATE kairos_grid::surge-modules)
         target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_SURGE=1)
+    endif()
+
+    # Link WASM module support into the plugin when enabled.
+    # clap_plugin.cpp detects availability via KAIROS_GRID_PLUGIN_HAS_WASM.
+    if(TARGET kairos_grid::wasm)
+        target_link_libraries(kairos-grid PRIVATE kairos_grid::wasm)
+        target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_WASM=1)
     endif()
 
     if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
