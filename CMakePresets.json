@@ -109,27 +109,71 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "CMAKE_BUILD_TYPE": "Debug"
       }
+    },
+    {
+      "name": "wasm",
+      "displayName": "WASM modules (dev)",
+      "description": "Dev build with Faust WASM module support (downloads wasmtime v44 pre-built binaries). Set KAIROS_GRID_BUILD_ENGINE=ON is implied.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS": "ON",
+        "KAIROS_GRID_BUILD_WASM":  "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "ci-wasm",
+      "displayName": "CI + WASM modules",
+      "description": "CI Release build with Faust WASM module support.",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS": "ON",
+        "KAIROS_GRID_BUILD_WASM":  "ON",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "plugin-wasm",
+      "displayName": "CLAP plugin + WASM modules (dev)",
+      "description": "Build the kairos-grid CLAP plugin with Faust WASM module support linked in.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS":  "ON",
+        "KAIROS_GRID_BUILD_PLUGIN": "ON",
+        "KAIROS_GRID_BUILD_WASM":   "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "dev",       "configurePreset": "dev" },
-    { "name": "ci",        "configurePreset": "ci" },
-    { "name": "ci-mi",     "configurePreset": "ci-mi" },
-    { "name": "release",   "configurePreset": "release" },
-    { "name": "plugin",    "configurePreset": "plugin" },
-    { "name": "mi",        "configurePreset": "mi" },
-    { "name": "surge",     "configurePreset": "surge" },
-    { "name": "ci-surge",  "configurePreset": "ci-surge" },
-    { "name": "plugin-mi", "configurePreset": "plugin-mi" }
+    { "name": "dev",         "configurePreset": "dev" },
+    { "name": "ci",          "configurePreset": "ci" },
+    { "name": "ci-mi",       "configurePreset": "ci-mi" },
+    { "name": "ci-wasm",     "configurePreset": "ci-wasm" },
+    { "name": "release",     "configurePreset": "release" },
+    { "name": "plugin",      "configurePreset": "plugin" },
+    { "name": "mi",          "configurePreset": "mi" },
+    { "name": "wasm",        "configurePreset": "wasm" },
+    { "name": "surge",       "configurePreset": "surge" },
+    { "name": "ci-surge",    "configurePreset": "ci-surge" },
+    { "name": "plugin-mi",   "configurePreset": "plugin-mi" },
+    { "name": "plugin-wasm", "configurePreset": "plugin-wasm" }
   ],
   "testPresets": [
-    { "name": "dev",       "configurePreset": "dev",       "output": { "outputOnFailure": true } },
-    { "name": "ci",        "configurePreset": "ci",        "output": { "outputOnFailure": true } },
-    { "name": "ci-mi",     "configurePreset": "ci-mi",     "output": { "outputOnFailure": true } },
-    { "name": "mi",        "configurePreset": "mi",        "output": { "outputOnFailure": true } },
-    { "name": "plugin",    "configurePreset": "plugin",    "output": { "outputOnFailure": true } },
-    { "name": "surge",     "configurePreset": "surge",     "output": { "outputOnFailure": true } },
-    { "name": "ci-surge",  "configurePreset": "ci-surge",  "output": { "outputOnFailure": true } },
-    { "name": "plugin-mi", "configurePreset": "plugin-mi", "output": { "outputOnFailure": true } }
+    { "name": "dev",         "configurePreset": "dev",         "output": { "outputOnFailure": true } },
+    { "name": "ci",          "configurePreset": "ci",          "output": { "outputOnFailure": true } },
+    { "name": "ci-mi",       "configurePreset": "ci-mi",       "output": { "outputOnFailure": true } },
+    { "name": "ci-wasm",     "configurePreset": "ci-wasm",     "output": { "outputOnFailure": true } },
+    { "name": "mi",          "configurePreset": "mi",          "output": { "outputOnFailure": true } },
+    { "name": "wasm",        "configurePreset": "wasm",        "output": { "outputOnFailure": true } },
+    { "name": "plugin",      "configurePreset": "plugin",      "output": { "outputOnFailure": true } },
+    { "name": "surge",       "configurePreset": "surge",       "output": { "outputOnFailure": true } },
+    { "name": "ci-surge",    "configurePreset": "ci-surge",    "output": { "outputOnFailure": true } },
+    { "name": "plugin-mi",   "configurePreset": "plugin-mi",   "output": { "outputOnFailure": true } },
+    { "name": "plugin-wasm", "configurePreset": "plugin-wasm", "output": { "outputOnFailure": true } }
   ]
 }

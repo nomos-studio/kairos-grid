@@ -98,20 +98,34 @@ endif()
 
 # CLAP plugin tests — only built when the clap target is available (plugin preset).
 if(TARGET clap)
-    add_executable(kairos-grid-plugin-tests
+    set(_plugin_test_sources
         test_clap_plugin.cpp
         test_tap_bus_ext.cpp
         test_param_bus_ext.cpp
         test_patch_bus_ext.cpp
         ../src/clap_plugin.cpp
     )
-
-    target_link_libraries(kairos-grid-plugin-tests
-        PRIVATE
-            kairos_grid::engine
-            clap
-            Catch2::Catch2WithMain
+    set(_plugin_test_libs
+        kairos_grid::engine
+        clap
+        Catch2::Catch2WithMain
     )
+
+    # When WASM is also enabled, include the hot-swap extension tests and link
+    # kairos_grid::wasm so that clap_plugin.cpp compiles with KAIROS_GRID_PLUGIN_HAS_WASM.
+    if(TARGET kairos_grid::wasm)
+        list(APPEND _plugin_test_sources test_hot_swap_ext.cpp)
+        list(APPEND _plugin_test_libs    kairos_grid::wasm)
+    endif()
+
+    add_executable(kairos-grid-plugin-tests ${_plugin_test_sources})
+
+    target_link_libraries(kairos-grid-plugin-tests PRIVATE ${_plugin_test_libs})
+
+    if(TARGET kairos_grid::wasm)
+        target_compile_definitions(kairos-grid-plugin-tests PRIVATE
+            KAIROS_GRID_PLUGIN_HAS_WASM=1)
+    endif()
 
     set_target_properties(kairos-grid-plugin-tests PROPERTIES
         CXX_STANDARD          20

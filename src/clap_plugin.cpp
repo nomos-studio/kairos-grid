@@ -21,6 +21,7 @@
 #endif
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
+#include <kairos_grid/clap_kairos_hot_swap.h>
 #include <kairos_grid/wasm_grid_module.hpp>
 #endif
 
@@ -473,6 +474,51 @@ class KairosGridPlugin {
         return true;
     }
 
+#if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
+    // -----------------------------------------------------------------------
+    // kairos/hot-swap extension
+    //
+    // Replaces the first :wasm-path value in current_edn_ with new_path, then
+    // re-queues the modified EDN via push_patch_impl().  The new WasmGridModule
+    // is compiled (or served from WasmModuleCache) on the main thread here;
+    // the swap is installed atomically at the next process() block boundary.
+    //
+    // Returns false if:
+    //   - new_path is unreadable
+    //   - current_edn_ is empty (no patch has been pushed yet)
+    //   - current_edn_ contains no :wasm-path key (patch has no WASM slot)
+    // -----------------------------------------------------------------------
+    bool hot_swap_request_impl(const std::string& new_path) {
+        if (new_path.empty() || current_edn_.empty()) return false;
+
+        // Quick readability check before touching the patch.
+        std::FILE* f = std::fopen(new_path.c_str(), "rb");
+        if (!f) return false;
+        std::fclose(f);
+
+        // Locate and replace the first :wasm-path "..." in current_edn_.
+        const std::string key    = ":wasm-path \"";
+        const std::size_t kpos   = current_edn_.find(key);
+        if (kpos == std::string::npos) return false;
+
+        const std::size_t vs = kpos + key.size();          // start of old path chars
+        const std::size_t ve = current_edn_.find('"', vs); // closing quote of old path
+        if (ve == std::string::npos) return false;
+
+        const std::string new_edn = current_edn_.substr(0, vs)
+                                  + new_path
+                                  + current_edn_.substr(ve);
+
+        return push_patch_impl(new_edn.c_str(), static_cast<uint32_t>(new_edn.size()));
+    }
+
+    static bool s_hot_swap_request(const clap_plugin_t* p,
+                                    const char* new_wasm_path) noexcept {
+        return cast_mut(p)->hot_swap_request_impl(
+            std::string{new_wasm_path ? new_wasm_path : ""});
+    }
+#endif
+
     // -----------------------------------------------------------------------
     // Audio + event processing
     // -----------------------------------------------------------------------
@@ -517,6 +563,9 @@ class KairosGridPlugin {
         if (std::strcmp(id, CLAP_EXT_KAIROS_TAP_BUS)   == 0) return &s_tap_bus_ext;
         if (std::strcmp(id, CLAP_EXT_KAIROS_PARAM_BUS) == 0) return &s_param_bus_ext;
         if (std::strcmp(id, CLAP_EXT_KAIROS_PATCH_BUS) == 0) return &s_patch_bus_ext;
+#if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
+        if (std::strcmp(id, CLAP_EXT_KAIROS_HOT_SWAP)  == 0) return &s_hot_swap_ext;
+#endif
         return nullptr;
     }
 
@@ -954,6 +1003,9 @@ class KairosGridPlugin {
     static const clap_plugin_tap_bus_t     s_tap_bus_ext;
     static const clap_plugin_param_bus_t   s_param_bus_ext;
     static const clap_plugin_patch_bus_t   s_patch_bus_ext;
+#if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
+    static const clap_kairos_hot_swap_t    s_hot_swap_ext;
+#endif
 
     // -----------------------------------------------------------------------
     // Members
@@ -1021,6 +1073,12 @@ const clap_plugin_patch_bus_t KairosGridPlugin::s_patch_bus_ext = {
     .push_patch = &KairosGridPlugin::patch_bus_push_patch,
     .get_patch  = &KairosGridPlugin::patch_bus_get_patch,
 };
+
+#if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
+const clap_kairos_hot_swap_t KairosGridPlugin::s_hot_swap_ext = {
+    .request = &KairosGridPlugin::s_hot_swap_request,
+};
+#endif
 
 // ---------------------------------------------------------------------------
 // Plugin factory
