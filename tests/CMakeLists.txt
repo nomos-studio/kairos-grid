@@ -148,6 +148,11 @@ if(TARGET kairos_grid::wasm)
             Catch2::Catch2WithMain
     )
 
+    # Provide the absolute path to the vendored test fixtures so the integration
+    # tests can locate sine_stereo.wasm regardless of where ctest is invoked from.
+    target_compile_definitions(kairos-grid-wasm-tests PRIVATE
+        KAIROS_GRID_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+
     set_target_properties(kairos-grid-wasm-tests PROPERTIES
         CXX_STANDARD          20
         CXX_STANDARD_REQUIRED ON

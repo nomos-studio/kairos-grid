@@ -271,6 +271,12 @@ static std::vector<WasmParamInfo> load_wasm_params(const std::string& wasm_path)
 // ---------------------------------------------------------------------------
 // Module cache — one wasm_engine_t + one compiled module per wasm_path.
 // Singleton lifetime matches the plugin process.
+//
+// Note: Faust 2.80+ can externalise math functions as "env._sinf" etc.
+// when using os.osc() and similar UGens.  To avoid host-provided imports,
+// use phasor-based DSP in production patches, or add a wasmtime_linker_t
+// here that registers the env.* math callbacks (planned follow-up).
+// The vendored test fixture uses a phasor to stay self-contained.
 // ---------------------------------------------------------------------------
 
 struct WasmModuleCache {
