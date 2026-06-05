@@ -45,6 +45,52 @@ TEST_CASE("WasmGridModule::create returns nullptr for invalid wasm bytes", "[was
 }
 
 // ---------------------------------------------------------------------------
+// Linker smoke test — sine oscillator (imports env._sinf)
+//
+// Compiles an inline Faust program using os.osc() which emits env._sinf.
+// Writes it to a temp file, verifies create() succeeds (linker resolves the
+// import), runs 200 samples and checks output is non-zero.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("WasmGridModule: linker resolves env._sinf for os.osc patch", "[wasm][linker]") {
+    // Write a minimal sine-oscillator DSP to a temp file and compile it.
+    const char* dsp_path  = "/tmp/kairos_grid_test_osc.dsp";
+    const char* wasm_path = "/tmp/kairos_grid_test_osc.wasm";
+
+    if (FILE* f = std::fopen(dsp_path, "w")) {
+        std::fputs("import(\"stdfaust.lib\"); process = os.osc(440) <: _,_;\n", f);
+        std::fclose(f);
+    }
+
+    // Shell out to faust — skip this test gracefully if faust is not on PATH.
+    const int rc = std::system(
+        ("faust -lang wasm " + std::string(dsp_path) +
+         " -o " + wasm_path + " > /dev/null 2>&1").c_str());
+    if (rc != 0) {
+        std::remove(dsp_path);
+        SKIP("faust not available — skipping linker test");
+    }
+
+    auto m = WasmGridModule::create(wasm_path);
+    REQUIRE(m != nullptr);
+    REQUIRE(m->n_audio_out() == 2);
+
+    const GridProcessArgs args{48000.f, 1.f / 48000.f, 0};
+    m->prepare(args);
+
+    float sum = 0.f;
+    for (int i = 0; i < 200; ++i) {
+        m->process(args);
+        sum += std::abs(m->outputs[0].voltage);
+    }
+    REQUIRE(sum > 0.f);
+
+    std::remove(dsp_path);
+    std::remove(wasm_path);
+    std::remove((std::string(wasm_path).substr(0, std::string(wasm_path).rfind('.')) + ".json").c_str());
+}
+
+// ---------------------------------------------------------------------------
 // Integration tests — sine_stereo.wasm fixture
 //
 // Fixture: tests/fixtures/sine_stereo.dsp compiled with faust -lang wasm.

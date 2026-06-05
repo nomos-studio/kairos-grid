@@ -269,18 +269,92 @@ static std::vector<WasmParamInfo> load_wasm_params(const std::string& wasm_path)
 }
 
 // ---------------------------------------------------------------------------
+// Faust math import callbacks.
+//
+// Faust 2.80+ externalises standard math functions as "env._sinf" etc.
+// when using os.osc(), filters, and most non-trivial DSP.  Each callback
+// is a distinct static function to avoid unsafe void*↔function-pointer
+// casting.  The linker resolves these at instantiation time.
+// ---------------------------------------------------------------------------
+
+#define FAUST_MATH_CB_1_1(name__, fn__)                                         \
+static wasm_trap_t* name__(void*, wasmtime_caller_t*,                           \
+                            const wasmtime_val_t* a, size_t,                    \
+                            wasmtime_val_t* r, size_t) noexcept {               \
+    r[0].kind = WASMTIME_F32; r[0].of.f32 = fn__(a[0].of.f32); return nullptr; \
+}
+
+#define FAUST_MATH_CB_2_1(name__, fn__)                                                      \
+static wasm_trap_t* name__(void*, wasmtime_caller_t*,                                        \
+                            const wasmtime_val_t* a, size_t,                                 \
+                            wasmtime_val_t* r, size_t) noexcept {                            \
+    r[0].kind = WASMTIME_F32; r[0].of.f32 = fn__(a[0].of.f32, a[1].of.f32); return nullptr; \
+}
+
+FAUST_MATH_CB_1_1(cb_sinf,   std::sinf)
+FAUST_MATH_CB_1_1(cb_cosf,   std::cosf)
+FAUST_MATH_CB_1_1(cb_tanf,   std::tanf)
+FAUST_MATH_CB_1_1(cb_expf,   std::expf)
+FAUST_MATH_CB_1_1(cb_logf,   std::logf)
+FAUST_MATH_CB_1_1(cb_log10f, std::log10f)
+FAUST_MATH_CB_1_1(cb_sqrtf,  std::sqrtf)
+FAUST_MATH_CB_1_1(cb_fabsf,  std::fabsf)
+FAUST_MATH_CB_1_1(cb_floorf, std::floorf)
+FAUST_MATH_CB_1_1(cb_ceilf,  std::ceilf)
+FAUST_MATH_CB_1_1(cb_roundf, std::roundf)
+FAUST_MATH_CB_1_1(cb_asinf,  std::asinf)
+FAUST_MATH_CB_1_1(cb_acosf,  std::acosf)
+FAUST_MATH_CB_1_1(cb_atanf,  std::atanf)
+FAUST_MATH_CB_2_1(cb_powf,   std::powf)
+FAUST_MATH_CB_2_1(cb_fmodf,  std::fmodf)
+FAUST_MATH_CB_2_1(cb_atan2f, std::atan2f)
+FAUST_MATH_CB_2_1(cb_fminf,  std::fminf)
+FAUST_MATH_CB_2_1(cb_fmaxf,  std::fmaxf)
+
+#undef FAUST_MATH_CB_1_1
+#undef FAUST_MATH_CB_2_1
+
+// Register one f32→f32 function using the header's inline helper, which uses
+// wasm_valtype_vec_new (heap-allocated) and correct ownership semantics.
+static void linker_def_f32_f32(wasmtime_linker_t* linker,
+                                const char* name,
+                                wasmtime_func_callback_t cb) noexcept {
+    wasm_functype_t* ft = wasm_functype_new_1_1(wasm_valtype_new_f32(),
+                                                 wasm_valtype_new_f32());
+    wasmtime_error_t* err =
+        wasmtime_linker_define_func(linker, "env", 3, name, std::strlen(name),
+                                     ft, cb, nullptr, nullptr);
+    wasm_functype_delete(ft);
+    if (err) wasmtime_error_delete(err);
+}
+
+// Register one (f32,f32)→f32 function.
+static void linker_def_f32_f32_f32(wasmtime_linker_t* linker,
+                                    const char* name,
+                                    wasmtime_func_callback_t cb) noexcept {
+    wasm_functype_t* ft = wasm_functype_new_2_1(wasm_valtype_new_f32(),
+                                                 wasm_valtype_new_f32(),
+                                                 wasm_valtype_new_f32());
+    wasmtime_error_t* err =
+        wasmtime_linker_define_func(linker, "env", 3, name, std::strlen(name),
+                                     ft, cb, nullptr, nullptr);
+    wasm_functype_delete(ft);
+    if (err) wasmtime_error_delete(err);
+}
+
+// ---------------------------------------------------------------------------
 // Module cache — one wasm_engine_t + one compiled module per wasm_path.
 // Singleton lifetime matches the plugin process.
 //
-// Note: Faust 2.80+ can externalise math functions as "env._sinf" etc.
-// when using os.osc() and similar UGens.  To avoid host-provided imports,
-// use phasor-based DSP in production patches, or add a wasmtime_linker_t
-// here that registers the env.* math callbacks (planned follow-up).
-// The vendored test fixture uses a phasor to stay self-contained.
+// The linker is pre-populated with the "env.*" math functions that Faust
+// 2.80+ externalises (env._sinf, env._cosf, etc.).  Any Faust-compiled WASM
+// that imports these resolves them at instantiation time; modules with no
+// imports (e.g. phasor-only DSP) instantiate normally via the same linker.
 // ---------------------------------------------------------------------------
 
 struct WasmModuleCache {
     wasm_engine_t*                                       engine;
+    wasmtime_linker_t*                                   linker;
     std::mutex                                           mtx;
     std::unordered_map<std::string, wasmtime_module_t*> modules;
 
@@ -302,9 +376,30 @@ struct WasmModuleCache {
     }
 
   private:
-    WasmModuleCache() : engine(wasm_engine_new()) {}
+    WasmModuleCache() : engine(wasm_engine_new()), linker(wasmtime_linker_new(engine)) {
+        linker_def_f32_f32    (linker, "_sinf",   cb_sinf);
+        linker_def_f32_f32    (linker, "_cosf",   cb_cosf);
+        linker_def_f32_f32    (linker, "_tanf",   cb_tanf);
+        linker_def_f32_f32    (linker, "_expf",   cb_expf);
+        linker_def_f32_f32    (linker, "_logf",   cb_logf);
+        linker_def_f32_f32    (linker, "_log10f", cb_log10f);
+        linker_def_f32_f32    (linker, "_sqrtf",  cb_sqrtf);
+        linker_def_f32_f32    (linker, "_fabsf",  cb_fabsf);
+        linker_def_f32_f32    (linker, "_floorf", cb_floorf);
+        linker_def_f32_f32    (linker, "_ceilf",  cb_ceilf);
+        linker_def_f32_f32    (linker, "_roundf", cb_roundf);
+        linker_def_f32_f32    (linker, "_asinf",  cb_asinf);
+        linker_def_f32_f32    (linker, "_acosf",  cb_acosf);
+        linker_def_f32_f32    (linker, "_atanf",  cb_atanf);
+        linker_def_f32_f32_f32(linker, "_powf",   cb_powf);
+        linker_def_f32_f32_f32(linker, "_fmodf",  cb_fmodf);
+        linker_def_f32_f32_f32(linker, "_atan2f", cb_atan2f);
+        linker_def_f32_f32_f32(linker, "_fminf",  cb_fminf);
+        linker_def_f32_f32_f32(linker, "_fmaxf",  cb_fmaxf);
+    }
     ~WasmModuleCache() {
         for (auto& [p, m] : modules) wasmtime_module_delete(m);
+        wasmtime_linker_delete(linker);
         wasm_engine_delete(engine);
     }
 };
@@ -422,7 +517,7 @@ std::unique_ptr<WasmGridModule> WasmGridModule::create(const std::string& wasm_p
     wasmtime_context_t* ctx  = wasmtime_store_context(impl->store);
     wasm_trap_t*        trap = nullptr;
     wasmtime_error_t*   err  =
-        wasmtime_instance_new(ctx, module, nullptr, 0, &impl->instance, &trap);
+        wasmtime_linker_instantiate(cache.linker, ctx, module, &impl->instance, &trap);
     if (err)  { wasmtime_error_delete(err);  return nullptr; }
     if (trap) { wasm_trap_delete(trap);      return nullptr; }
 
