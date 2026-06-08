@@ -488,7 +488,9 @@ class KairosGridPlugin {
     //   - current_edn_ is empty (no patch has been pushed yet)
     //   - current_edn_ contains no :wasm-path key (patch has no WASM slot)
     // -----------------------------------------------------------------------
-    bool hot_swap_request_impl(const std::string& new_path) {
+    // Replace one :wasm-path occurrence in current_edn_ with new_path.
+    // If old_path is non-empty, match that specific slot; otherwise replace the first.
+    bool hot_swap_request_impl(const std::string& new_path, const std::string& old_path) {
         if (new_path.empty() || current_edn_.empty()) return false;
 
         // Quick readability check before touching the patch.
@@ -496,13 +498,23 @@ class KairosGridPlugin {
         if (!f) return false;
         std::fclose(f);
 
-        // Locate and replace the first :wasm-path "..." in current_edn_.
-        const std::string key    = ":wasm-path \"";
-        const std::size_t kpos   = current_edn_.find(key);
+        const std::string key = ":wasm-path \"";
+        std::size_t search_from = 0;
+
+        // If old_path is given, scan for the slot whose current path matches it.
+        // Otherwise fall through with search_from = 0 to replace the first slot.
+        if (!old_path.empty()) {
+            const std::string target = key + old_path + "\"";
+            search_from = current_edn_.find(target);
+            if (search_from == std::string::npos) return false;
+            search_from += key.size(); // point at the opening char of old_path
+        }
+
+        const std::size_t kpos = current_edn_.find(key, search_from);
         if (kpos == std::string::npos) return false;
 
-        const std::size_t vs = kpos + key.size();          // start of old path chars
-        const std::size_t ve = current_edn_.find('"', vs); // closing quote of old path
+        const std::size_t vs = kpos + key.size();
+        const std::size_t ve = current_edn_.find('"', vs);
         if (ve == std::string::npos) return false;
 
         const std::string new_edn = current_edn_.substr(0, vs)
@@ -513,9 +525,11 @@ class KairosGridPlugin {
     }
 
     static bool s_hot_swap_request(const clap_plugin_t* p,
-                                    const char* new_wasm_path) noexcept {
+                                    const char* new_wasm_path,
+                                    const char* old_wasm_path) noexcept {
         return cast_mut(p)->hot_swap_request_impl(
-            std::string{new_wasm_path ? new_wasm_path : ""});
+            std::string{new_wasm_path ? new_wasm_path : ""},
+            std::string{old_wasm_path ? old_wasm_path : ""});
     }
 #endif
 

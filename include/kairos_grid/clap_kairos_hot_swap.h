@@ -30,13 +30,21 @@
 
 #include <clap/clap.h>
 
-#define CLAP_EXT_KAIROS_HOT_SWAP "org.cljseq.kairos.ext.hot-swap/1"
+#define CLAP_EXT_KAIROS_HOT_SWAP "org.cljseq.kairos.ext.hot-swap/2"
 
 // Plugin-side vtable returned by get_extension(CLAP_EXT_KAIROS_HOT_SWAP).
 typedef struct {
     // Queue new_wasm_path for the next block-boundary swap.
+    //
+    // new_wasm_path — replacement .wasm file (must not be null or empty).
+    // old_wasm_path — identifies which WASM slot to replace, by its current
+    //                 .wasm path.  NULL or empty = replace the first WASM slot
+    //                 (backward-compatible behaviour for single-slot patches).
+    //
     // Returns false if: new_wasm_path is null/empty, the file is unreadable,
     // no WASM patch is currently loaded, or the new module has different I/O counts.
     // Called from the main thread only.
-    bool (CLAP_ABI *request)(const clap_plugin_t* plugin, const char* new_wasm_path);
+    bool (CLAP_ABI *request)(const clap_plugin_t* plugin,
+                             const char* new_wasm_path,
+                             const char* old_wasm_path);
 } clap_kairos_hot_swap_t;
