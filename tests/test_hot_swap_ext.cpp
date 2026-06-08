@@ -67,8 +67,8 @@ TEST_CASE("hot-swap request returns false for null path", "[hot-swap]") {
         p->get_extension(p, CLAP_EXT_KAIROS_HOT_SWAP));
     REQUIRE(ext != nullptr);
 
-    REQUIRE_FALSE(ext->request(p, nullptr));
-    REQUIRE_FALSE(ext->request(p, ""));
+    REQUIRE_FALSE(ext->request(p, nullptr, nullptr));
+    REQUIRE_FALSE(ext->request(p, "", nullptr));
 
     free_plugin(p);
 }
@@ -91,7 +91,7 @@ TEST_CASE("hot-swap request returns false when no patch is loaded", "[hot-swap]"
     REQUIRE(ext != nullptr);
 
     // No patch pushed → current_edn_ is empty → request() returns false.
-    REQUIRE_FALSE(ext->request(p, path));
+    REQUIRE_FALSE(ext->request(p, path, nullptr));
 
     std::remove(path);
     free_plugin(p);
@@ -105,7 +105,7 @@ TEST_CASE("hot-swap request returns false for nonexistent file", "[hot-swap]") {
         p->get_extension(p, CLAP_EXT_KAIROS_HOT_SWAP));
     REQUIRE(ext != nullptr);
 
-    REQUIRE_FALSE(ext->request(p, "/nonexistent/path/that/does/not/exist.wasm"));
+    REQUIRE_FALSE(ext->request(p, "/nonexistent/path/that/does/not/exist.wasm", nullptr));
 
     free_plugin(p);
 }
