@@ -7,7 +7,7 @@
 // process() block boundary, preserving audio continuity.
 //
 // ABI contract (must match kairos/src/wasm_bridge_plugin.hpp):
-//   Extension ID : "org.cljseq.kairos.ext.hot-swap/1"
+//   Extension ID : "org.nomos-studio.kairos.ext.hot-swap/1"
 //   Struct layout: one function pointer (request).
 //
 // Protocol:
@@ -30,7 +30,7 @@
 
 #include <clap/clap.h>
 
-#define CLAP_EXT_KAIROS_HOT_SWAP "org.cljseq.kairos.ext.hot-swap/2"
+#define CLAP_EXT_KAIROS_HOT_SWAP "org.nomos-studio.kairos.ext.hot-swap/2"
 
 // Plugin-side vtable returned by get_extension(CLAP_EXT_KAIROS_HOT_SWAP).
 typedef struct {
