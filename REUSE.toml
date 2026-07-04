@@ -1,0 +1,26 @@
+version = 1
+SPDX-PackageName = "kairos-grid"
+SPDX-PackageSupplier = "rodgert@twrodgers.com"
+SPDX-PackageDownloadLocation = "https://github.com/nomos-studio/kairos-grid"
+
+# Authored source — SPDX-License-Identifier already inline; aggregate adds copyright.
+[[annotations]]
+path = ["src/**", "include/**", "tests/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 nomos-studio contributors"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# CMake shim wrappers for eurorack/surge vendored libs
+[[annotations]]
+path = "libs/**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 nomos-studio contributors"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# Build system, scripts, and project metadata
+[[annotations]]
+path = ["CMakeLists.txt", "scripts/**", ".gitignore",
+        "README.md", "CHANGELOG.md", "CMakePresets.json"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025-2026 nomos-studio contributors"
+SPDX-License-Identifier = "GPL-3.0-or-later"
