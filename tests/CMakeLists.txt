@@ -11,6 +11,7 @@ target_link_libraries(kairos-grid-tests
     PRIVATE
         kairos_grid::engine
         Catch2::Catch2WithMain
+        sanitizers::sanitizers
 )
 
 set_target_properties(kairos-grid-tests PROPERTIES
@@ -31,6 +32,7 @@ if(TARGET kairos_grid::surge-modules)
         PRIVATE
             kairos_grid::surge-modules
             Catch2::Catch2WithMain
+            sanitizers::sanitizers
     )
 
     set_target_properties(kairos-grid-surge-tests PROPERTIES
@@ -49,6 +51,7 @@ if(TARGET kairos_grid::surge-modules)
         PRIVATE
             kairos_grid::surge-modules
             Catch2::Catch2WithMain
+            sanitizers::sanitizers
     )
 
     set_target_properties(kairos-grid-surge-filter-tests PROPERTIES
@@ -67,6 +70,7 @@ if(TARGET kairos_grid::surge-modules)
         PRIVATE
             kairos_grid::surge-modules
             Catch2::Catch2WithMain
+            sanitizers::sanitizers
     )
 
     set_target_properties(kairos-grid-surge-effect-tests PROPERTIES
@@ -85,6 +89,7 @@ if(TARGET kairos_grid::surge-modules)
         PRIVATE
             kairos_grid::surge-modules
             Catch2::Catch2WithMain
+            sanitizers::sanitizers
     )
 
     set_target_properties(kairos-grid-surge-modulator-tests PROPERTIES
@@ -109,6 +114,7 @@ if(TARGET clap)
         kairos_grid::engine
         clap
         Catch2::Catch2WithMain
+        sanitizers::sanitizers
     )
 
     # When WASM is also enabled, include the hot-swap extension tests and link
@@ -146,6 +152,7 @@ if(TARGET kairos_grid::wasm)
         PRIVATE
             kairos_grid::wasm
             Catch2::Catch2WithMain
+            sanitizers::sanitizers
     )
 
     # Provide the absolute path to the vendored test fixtures so the integration
@@ -172,6 +179,7 @@ if(TARGET kairos_grid::mi)
         PRIVATE
             kairos_grid::mi
             Catch2::Catch2WithMain
+            sanitizers::sanitizers
     )
 
     set_target_properties(kairos-grid-mi-tests PROPERTIES

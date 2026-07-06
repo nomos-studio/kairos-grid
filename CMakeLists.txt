@@ -22,6 +22,7 @@ project(kairos-grid
 
 include(FetchContent)
 include(GNUInstallDirs)
+include(cmake/Sanitizers.cmake)
 
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL
     "Skip network fetch if already populated")
@@ -76,6 +77,8 @@ target_link_libraries(kairos-grid-engine
     PUBLIC
         nomos::topology
 )
+
+nomos_sanitize_target(kairos-grid-engine)
 
 set_target_properties(kairos-grid-engine PROPERTIES
     CXX_STANDARD          20
@@ -257,6 +260,7 @@ if(KAIROS_GRID_BUILD_PLUGIN AND KAIROS_GRID_BUILD_ENGINE)
     target_link_libraries(kairos-grid PRIVATE
         kairos_grid::engine
         clap
+        sanitizers::sanitizers
     )
 
     # Link MI DSP wrappers into the plugin when both are enabled.
