@@ -17,10 +17,11 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2025-2026 nomos-studio contributors"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 
-# Build system, scripts, and project metadata
+# Build system, scripts, project metadata, and CI workflows
 [[annotations]]
 path = ["CMakeLists.txt", "scripts/**", ".gitignore",
-        "README.md", "CHANGELOG.md", "CMakePresets.json"]
+        "README.md", "CHANGELOG.md", "CMakePresets.json",
+        ".github/workflows/**"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025-2026 nomos-studio contributors"
 SPDX-License-Identifier = "GPL-3.0-or-later"

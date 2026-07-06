@@ -2,12 +2,14 @@
 #
 # kairos-grid CI — two-gate pipeline.
 #
-# Gate 1 (build-and-test): all compilers, Release build, runs on push + PR.
-#   - nomos-topology checked out at current main (main-tracking integration).
-#   Gate 1 has two sub-jobs: core engine CI, and Surge XT CI (expensive build
-#   kept separate so it can be retried or skipped in future without blocking).
-# Gate 2 (sanitize):       Clang only, engine-only Debug + ASan + UBSan, PR only,
-#                           runs only after gate 1 is fully green.
+# Gate 1 has two independent jobs, both run on push + PR:
+#   build-and-test      — core engine, 3-compiler matrix, Release.
+#   build-and-test-surge — Surge XT DSP wrappers, 3-compiler matrix, Release
+#                          (separate job: expensive fetch, distinct code path).
+#   nomos-topology checked out at current main in both (main-tracking integration).
+#
+# Gate 2 (sanitize): Clang only, engine-only Debug + ASan + UBSan, PR only,
+#                    runs only after build-and-test is fully green.
 
 name: CI
 
@@ -32,6 +34,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache CMake FetchContent deps
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: ${{ runner.os }}-${{ matrix.compiler }}-kairos-grid-cmake-deps-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.compiler }}-kairos-grid-cmake-deps-
+
       - name: Check out nomos-topology @ main
         uses: actions/checkout@v4
         with:
@@ -42,19 +51,59 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y libasound2-dev
 
-      - name: Cache CMake FetchContent deps
-        uses: actions/cache@v4
-        with:
-          path: build/_deps
-          key: ${{ runner.os }}-${{ matrix.compiler }}-kairos-grid-cmake-deps-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.compiler }}-kairos-grid-cmake-deps-
-
       - name: Configure
         env:
           CC:  ${{ matrix.cc }}
           CXX: ${{ matrix.cxx }}
         run: |
           cmake -S . -B build --preset ci \
+            -DCMAKE_C_COMPILER=${{ matrix.cc }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+            -DNOMOS_TOPOLOGY_SRC_DIR=${{ github.workspace }}/deps/nomos-topology
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  build-and-test-surge:
+    name: surge / ${{ matrix.os }} / ${{ matrix.compiler }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, compiler: gcc-14,     cc: gcc-14,   cxx: g++-14     }
+          - { os: ubuntu-24.04, compiler: clang-18,   cc: clang-18, cxx: clang++-18 }
+          - { os: macos-15,     compiler: apple-clang, cc: clang,   cxx: clang++    }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache CMake FetchContent deps (surge)
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: ${{ runner.os }}-${{ matrix.compiler }}-kairos-grid-surge-cmake-deps-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.compiler }}-kairos-grid-surge-cmake-deps-
+
+      - name: Check out nomos-topology @ main
+        uses: actions/checkout@v4
+        with:
+          repository: nomos-studio/nomos-topology
+          path: deps/nomos-topology
+
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y libasound2-dev
+
+      - name: Configure
+        env:
+          CC:  ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          cmake -S . -B build --preset ci-surge \
             -DCMAKE_C_COMPILER=${{ matrix.cc }} \
             -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
             -DNOMOS_TOPOLOGY_SRC_DIR=${{ github.workspace }}/deps/nomos-topology
@@ -80,6 +129,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache CMake FetchContent deps (sanitize)
+        uses: actions/cache@v4
+        with:
+          path: build-san/_deps
+          key: ${{ runner.os }}-clang-kairos-grid-san-cmake-deps-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: ${{ runner.os }}-clang-kairos-grid-san-cmake-deps-
+
       - name: Check out nomos-topology @ main
         uses: actions/checkout@v4
         with:
@@ -89,13 +145,6 @@ jobs:
       - name: Install system deps (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y libasound2-dev
-
-      - name: Cache CMake FetchContent deps (sanitize)
-        uses: actions/cache@v4
-        with:
-          path: build-san/_deps
-          key: ${{ runner.os }}-clang-kairos-grid-san-cmake-deps-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: ${{ runner.os }}-clang-kairos-grid-san-cmake-deps-
 
       - name: Configure
         env:
