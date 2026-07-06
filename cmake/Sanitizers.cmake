@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 # cmake/Sanitizers.cmake — AddressSanitizer, ThreadSanitizer, UndefinedBehaviorSanitizer
 #
 # Usage — executables and test runners
