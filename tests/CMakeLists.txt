@@ -108,6 +108,7 @@ if(TARGET clap)
         test_tap_bus_ext.cpp
         test_param_bus_ext.cpp
         test_patch_bus_ext.cpp
+        test_concurrent.cpp
         ../src/clap_plugin.cpp
     )
     set(_plugin_test_libs
