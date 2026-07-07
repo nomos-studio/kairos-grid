@@ -165,6 +165,7 @@ if(KAIROS_GRID_BUILD_WASM AND KAIROS_GRID_BUILD_ENGINE)
         src/wasm_grid_module.cpp
     )
     add_library(kairos_grid::wasm ALIAS kairos-grid-wasm)
+    nomos_sanitize_target(kairos-grid-wasm)
 
     # wasmtime is PUBLIC so that consumers (plugin, tests) get libwasmtime.a
     # transitively without having to repeat the link dependency.

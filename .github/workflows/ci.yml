@@ -162,6 +162,47 @@ jobs:
       - name: Test
         run: ctest --test-dir build-san --output-on-failure
 
+  tsan:
+    name: tsan / ubuntu-24.04
+    runs-on: ubuntu-24.04
+    needs: build-and-test
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache CMake FetchContent deps (tsan)
+        uses: actions/cache@v4
+        with:
+          path: build-tsan/_deps
+          key: ubuntu-clang-kairos-grid-tsan-cmake-deps-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: ubuntu-clang-kairos-grid-tsan-cmake-deps-
+
+      - name: Check out nomos-topology @ main
+        uses: actions/checkout@v4
+        with:
+          repository: nomos-studio/nomos-topology
+          path: deps/nomos-topology
+
+      - name: Install system deps
+        run: sudo apt-get update -qq && sudo apt-get install -y libasound2-dev
+
+      - name: Configure
+        env:
+          CC:  clang-18
+          CXX: clang++-18
+        run: |
+          cmake -S . -B build-tsan --preset tsan \
+            -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_CXX_COMPILER=clang++-18 \
+            -DNOMOS_TOPOLOGY_SRC_DIR=${{ github.workspace }}/deps/nomos-topology
+
+      - name: Build
+        run: cmake --build build-tsan --parallel
+
+      - name: Test
+        run: ctest --test-dir build-tsan --output-on-failure
+
   format-check:
     name: clang-format
     runs-on: ubuntu-24.04

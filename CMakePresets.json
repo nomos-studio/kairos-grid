@@ -158,6 +158,17 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "NOMOS_SANITIZE": "address,undefined"
       }
+    },
+    {
+      "name": "tsan",
+      "displayName": "Sanitize (TSan)",
+      "description": "Debug build with ThreadSanitizer — gate 3 of CI; engine tests only. TSan is mutually exclusive with ASan; UBSan is covered by the sanitize preset.",
+      "binaryDir": "${sourceDir}/build-tsan",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS":  "ON",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NOMOS_SANITIZE": "thread"
+      }
     }
   ],
   "buildPresets": [
@@ -166,6 +177,7 @@
     { "name": "ci-mi",       "configurePreset": "ci-mi" },
     { "name": "ci-wasm",     "configurePreset": "ci-wasm" },
     { "name": "sanitize",    "configurePreset": "sanitize" },
+    { "name": "tsan",        "configurePreset": "tsan" },
     { "name": "release",     "configurePreset": "release" },
     { "name": "plugin",      "configurePreset": "plugin" },
     { "name": "mi",          "configurePreset": "mi" },
@@ -181,6 +193,7 @@
     { "name": "ci-mi",       "configurePreset": "ci-mi",       "output": { "outputOnFailure": true } },
     { "name": "ci-wasm",     "configurePreset": "ci-wasm",     "output": { "outputOnFailure": true } },
     { "name": "sanitize",    "configurePreset": "sanitize",    "output": { "outputOnFailure": true } },
+    { "name": "tsan",        "configurePreset": "tsan",        "output": { "outputOnFailure": true } },
     { "name": "mi",          "configurePreset": "mi",          "output": { "outputOnFailure": true } },
     { "name": "wasm",        "configurePreset": "wasm",        "output": { "outputOnFailure": true } },
     { "name": "plugin",      "configurePreset": "plugin",      "output": { "outputOnFailure": true } },
