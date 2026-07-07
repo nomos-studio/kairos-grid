@@ -8,8 +8,11 @@
 #                          (separate job: expensive fetch, distinct code path).
 #   nomos-topology checked out at current main in both (main-tracking integration).
 #
-# Gate 2 (sanitize): Clang only, engine-only Debug + ASan + UBSan, PR only,
+# Gate 2 (sanitize): Clang only, engine + plugin Debug + ASan + UBSan, PR only,
 #                    runs only after build-and-test is fully green.
+# Gate 3 (tsan):    Linux/Clang only, engine + plugin Debug + TSan, PR only,
+#                    runs only after build-and-test is fully green.
+#                    TSan is mutually exclusive with ASan; UBSan in gate 2.
 
 name: CI
 

@@ -151,10 +151,11 @@
     {
       "name": "sanitize",
       "displayName": "Sanitize (ASan + UBSan)",
-      "description": "Debug build with AddressSanitizer and UndefinedBehaviorSanitizer — gate 2 of CI; engine tests only (no plugin/MI/WASM/Surge)",
+      "description": "Debug build with AddressSanitizer and UndefinedBehaviorSanitizer — gate 2 of CI; engine + plugin tests (no MI/WASM/Surge)",
       "binaryDir": "${sourceDir}/build-san",
       "cacheVariables": {
         "KAIROS_GRID_BUILD_TESTS":  "ON",
+        "KAIROS_GRID_BUILD_PLUGIN": "ON",
         "CMAKE_BUILD_TYPE": "Debug",
         "NOMOS_SANITIZE": "address,undefined"
       }
@@ -162,10 +163,11 @@
     {
       "name": "tsan",
       "displayName": "Sanitize (TSan)",
-      "description": "Debug build with ThreadSanitizer — gate 3 of CI; engine tests only. TSan is mutually exclusive with ASan; UBSan is covered by the sanitize preset.",
+      "description": "Debug build with ThreadSanitizer — gate 3 of CI; engine + plugin tests. TSan is mutually exclusive with ASan; UBSan is covered by the sanitize preset.",
       "binaryDir": "${sourceDir}/build-tsan",
       "cacheVariables": {
         "KAIROS_GRID_BUILD_TESTS":  "ON",
+        "KAIROS_GRID_BUILD_PLUGIN": "ON",
         "CMAKE_BUILD_TYPE": "Debug",
         "NOMOS_SANITIZE": "thread"
       }
