@@ -44,12 +44,12 @@ class EnvironmentModule : public GridModule {
 
     EnvironmentModule() : GridModule(k_num_ports, k_num_ports) {
         param_ports.reserve(k_num_ports);
-        param_ports.push_back({"env/tempo_hz",       k_tempo_hz});
-        param_ports.push_back({"env/beat_phase",     k_beat_phase});
-        param_ports.push_back({"env/bar_phase",      k_bar_phase});
-        param_ports.push_back({"env/is_playing",     k_is_playing});
-        param_ports.push_back({"env/voice_note",     k_voice_note});
-        param_ports.push_back({"env/voice_gate",     k_voice_gate});
+        param_ports.push_back({"env/tempo_hz", k_tempo_hz});
+        param_ports.push_back({"env/beat_phase", k_beat_phase});
+        param_ports.push_back({"env/bar_phase", k_bar_phase});
+        param_ports.push_back({"env/is_playing", k_is_playing});
+        param_ports.push_back({"env/voice_note", k_voice_note});
+        param_ports.push_back({"env/voice_gate", k_voice_gate});
         param_ports.push_back({"env/voice_velocity", k_voice_velocity});
     }
 

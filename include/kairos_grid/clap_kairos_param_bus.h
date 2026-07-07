@@ -36,16 +36,16 @@
 // One param-bus port entry.
 // All fields are valid until the next activate() or reset().
 typedef struct {
-    uint32_t    id;    // stable index into the param frame for this session
-    const char* name;  // e.g. "env/tempo_hz" — UTF-8, null-terminated
+    uint32_t    id;   // stable index into the param frame for this session
+    const char* name; // e.g. "env/tempo_hz" — UTF-8, null-terminated
 } clap_kairos_param_entry_t;
 
 // Snapshot of all param-bus ports registered at the last activate() call.
 // epoch increments every time the schema changes (activate or reset).
 typedef struct {
-    uint32_t                          epoch;    // schema generation counter
-    uint32_t                          count;    // number of valid entries
-    const clap_kairos_param_entry_t*  entries;  // [count] entries; null when count == 0
+    uint32_t                         epoch;   // schema generation counter
+    uint32_t                         count;   // number of valid entries
+    const clap_kairos_param_entry_t* entries; // [count] entries; null when count == 0
 } clap_kairos_param_schema_t;
 
 // Plugin-side vtable returned by get_extension(CLAP_EXT_KAIROS_PARAM_BUS).
@@ -54,13 +54,13 @@ typedef struct {
     // The returned pointer is owned by the plugin and is valid until the next
     // activate() or reset() call.  Never returns null after a successful
     // activate().
-    const clap_kairos_param_schema_t* (CLAP_ABI *get_schema)(const clap_plugin_t* plugin);
+    const clap_kairos_param_schema_t*(CLAP_ABI* get_schema)(const clap_plugin_t* plugin);
 
     // Write param values directly into the plugin's param frame.
     // values[i] corresponds to schema->entries[i]; entries with i >= count are
     // left unchanged.  Extra values beyond schema->count are ignored.
     // Must be called from the audio thread before each process() call.
     // Returns false if the plugin is not activated or the schema is empty.
-    bool (CLAP_ABI *set_param_frame)(const clap_plugin_t* plugin,
-                                      const float* values, uint32_t count);
+    bool(CLAP_ABI* set_param_frame)(const clap_plugin_t* plugin, const float* values,
+                                    uint32_t count);
 } clap_plugin_param_bus_t;

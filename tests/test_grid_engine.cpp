@@ -47,8 +47,8 @@ class SumModule : public GridModule {
 class SampleRateCaptureModule : public GridModule {
   public:
     SampleRateCaptureModule() : GridModule(0, 0) {}
-    void prepare(const GridProcessArgs& a) override { captured_rate = a.sample_rate; }
-    void process(const GridProcessArgs&) override {}
+    void  prepare(const GridProcessArgs& a) override { captured_rate = a.sample_rate; }
+    void  process(const GridProcessArgs&) override {}
     float captured_rate = 0.f;
 };
 
@@ -56,7 +56,7 @@ class SampleRateCaptureModule : public GridModule {
 class FrameCounterModule : public GridModule {
   public:
     FrameCounterModule() : GridModule(0, 0) {}
-    void process(const GridProcessArgs& a) override { last_frame = a.frame; }
+    void    process(const GridProcessArgs& a) override { last_frame = a.frame; }
     int64_t last_frame = -1;
 };
 
@@ -74,8 +74,8 @@ TEST_CASE("GridGraph builds a single module with no cables") {
 
 TEST_CASE("GridGraph builds a linear chain") {
     GridGraph g;
-    int i_src  = g.add_module(std::make_unique<ConstModule>(1.f));
-    int i_gain = g.add_module(std::make_unique<GainModule>(0.5f));
+    int       i_src  = g.add_module(std::make_unique<ConstModule>(1.f));
+    int       i_gain = g.add_module(std::make_unique<GainModule>(0.5f));
     g.add_cable({i_src, 0, i_gain, 0});
 
     auto res = g.build();
@@ -85,8 +85,8 @@ TEST_CASE("GridGraph builds a linear chain") {
 
 TEST_CASE("GridGraph detects a two-node cycle") {
     GridGraph g;
-    int a = g.add_module(std::make_unique<GainModule>(1.f));
-    int b = g.add_module(std::make_unique<GainModule>(1.f));
+    int       a = g.add_module(std::make_unique<GainModule>(1.f));
+    int       b = g.add_module(std::make_unique<GainModule>(1.f));
     g.add_cable({a, 0, b, 0});
     g.add_cable({b, 0, a, 0});
 
@@ -107,9 +107,9 @@ TEST_CASE("GridGraph rejects invalid module index in cable") {
 
 TEST_CASE("GridGraph rejects invalid port index in cable") {
     GridGraph g;
-    int a = g.add_module(std::make_unique<ConstModule>(0.f)); // 0 inputs, 1 output
-    int b = g.add_module(std::make_unique<GainModule>(1.f));  // 1 input,  1 output
-    g.add_cable({a, 5, b, 0});                                // port 5 doesn't exist
+    int       a = g.add_module(std::make_unique<ConstModule>(0.f)); // 0 inputs, 1 output
+    int       b = g.add_module(std::make_unique<GainModule>(1.f));  // 1 input,  1 output
+    g.add_cable({a, 5, b, 0});                                      // port 5 doesn't exist
 
     auto res = g.build();
     REQUIRE_FALSE(res.has_value());
@@ -121,14 +121,14 @@ TEST_CASE("GridGraph accepts a diamond topology") {
     //              sum → (check)
     // src → gain_b ↗
     GridGraph g;
-    int i_src   = g.add_module(std::make_unique<ConstModule>(1.f));
-    int i_gain_a = g.add_module(std::make_unique<GainModule>(2.f));
-    int i_gain_b = g.add_module(std::make_unique<GainModule>(3.f));
-    int i_sum   = g.add_module(std::make_unique<SumModule>());
-    g.add_cable({i_src,    0, i_gain_a, 0});
-    g.add_cable({i_src,    0, i_gain_b, 0});
-    g.add_cable({i_gain_a, 0, i_sum,   0});
-    g.add_cable({i_gain_b, 0, i_sum,   1});
+    int       i_src    = g.add_module(std::make_unique<ConstModule>(1.f));
+    int       i_gain_a = g.add_module(std::make_unique<GainModule>(2.f));
+    int       i_gain_b = g.add_module(std::make_unique<GainModule>(3.f));
+    int       i_sum    = g.add_module(std::make_unique<SumModule>());
+    g.add_cable({i_src, 0, i_gain_a, 0});
+    g.add_cable({i_src, 0, i_gain_b, 0});
+    g.add_cable({i_gain_a, 0, i_sum, 0});
+    g.add_cable({i_gain_b, 0, i_sum, 1});
 
     auto res = g.build();
     REQUIRE(res.has_value());
@@ -142,7 +142,7 @@ TEST_CASE("GridEngine::prepare propagates sample rate to all modules") {
     float captured = 0.f;
 
     // Use a raw pointer to observe the captured rate after build().
-    auto cap = std::make_unique<SampleRateCaptureModule>();
+    auto  cap     = std::make_unique<SampleRateCaptureModule>();
     auto* cap_ptr = cap.get();
 
     GridGraph g;
@@ -155,7 +155,7 @@ TEST_CASE("GridEngine::prepare propagates sample rate to all modules") {
 }
 
 TEST_CASE("GridEngine::prepare resets frame counter") {
-    auto fc = std::make_unique<FrameCounterModule>();
+    auto  fc     = std::make_unique<FrameCounterModule>();
     auto* fc_ptr = fc.get();
 
     GridGraph g;
@@ -167,7 +167,7 @@ TEST_CASE("GridEngine::prepare resets frame counter") {
     res->step_block(5);
     REQUIRE(fc_ptr->last_frame == 4); // 0-indexed: frames 0,1,2,3,4
 
-    res->prepare(48000.f);            // reset
+    res->prepare(48000.f); // reset
     res->step_block(1);
     REQUIRE(fc_ptr->last_frame == 0);
 }
@@ -185,21 +185,20 @@ TEST_CASE("GridEngine::prepare resets frame counter") {
 
 TEST_CASE("GridEngine: ConstModule output is set after one sample") {
     GridGraph g;
-    int i_src = g.add_module(std::make_unique<ConstModule>(1.f));
-    auto res = g.build();
+    int       i_src = g.add_module(std::make_unique<ConstModule>(1.f));
+    auto      res   = g.build();
     REQUIRE(res.has_value());
 
     res->prepare(48000.f);
     res->step_block(1);
 
-    REQUIRE_THAT(res->module(i_src)->outputs[0].voltage,
-                 Catch::Matchers::WithinAbs(1.f, 1e-6f));
+    REQUIRE_THAT(res->module(i_src)->outputs[0].voltage, Catch::Matchers::WithinAbs(1.f, 1e-6f));
 }
 
 TEST_CASE("GridEngine: GainModule sees correct input after 2 samples (1-sample cable latency)") {
     GridGraph g;
-    int i_src  = g.add_module(std::make_unique<ConstModule>(1.f));
-    int i_gain = g.add_module(std::make_unique<GainModule>(0.5f));
+    int       i_src  = g.add_module(std::make_unique<ConstModule>(1.f));
+    int       i_gain = g.add_module(std::make_unique<GainModule>(0.5f));
     g.add_cable({i_src, 0, i_gain, 0});
 
     auto res = g.build();
@@ -211,8 +210,7 @@ TEST_CASE("GridEngine: GainModule sees correct input after 2 samples (1-sample c
     // Sample 2: GainModule reads 1.0 → output=0.5.
     res->step_block(2);
 
-    REQUIRE_THAT(res->module(i_gain)->outputs[0].voltage,
-                 Catch::Matchers::WithinAbs(0.5f, 1e-6f));
+    REQUIRE_THAT(res->module(i_gain)->outputs[0].voltage, Catch::Matchers::WithinAbs(0.5f, 1e-6f));
 }
 
 TEST_CASE("GridEngine: diamond graph sums correctly after propagation") {
@@ -221,14 +219,14 @@ TEST_CASE("GridEngine: diamond graph sums correctly after propagation") {
     // src(1.0) → gain_b(×3) ↗
     // (src fans out to both gains via 2 cables)
     GridGraph g;
-    int i_src    = g.add_module(std::make_unique<ConstModule>(1.f));
-    int i_gain_a = g.add_module(std::make_unique<GainModule>(2.f));
-    int i_gain_b = g.add_module(std::make_unique<GainModule>(3.f));
-    int i_sum    = g.add_module(std::make_unique<SumModule>());
-    g.add_cable({i_src,    0, i_gain_a, 0});
-    g.add_cable({i_src,    0, i_gain_b, 0});
-    g.add_cable({i_gain_a, 0, i_sum,   0});
-    g.add_cable({i_gain_b, 0, i_sum,   1});
+    int       i_src    = g.add_module(std::make_unique<ConstModule>(1.f));
+    int       i_gain_a = g.add_module(std::make_unique<GainModule>(2.f));
+    int       i_gain_b = g.add_module(std::make_unique<GainModule>(3.f));
+    int       i_sum    = g.add_module(std::make_unique<SumModule>());
+    g.add_cable({i_src, 0, i_gain_a, 0});
+    g.add_cable({i_src, 0, i_gain_b, 0});
+    g.add_cable({i_gain_a, 0, i_sum, 0});
+    g.add_cable({i_gain_b, 0, i_sum, 1});
 
     auto res = g.build();
     REQUIRE(res.has_value());
@@ -236,14 +234,13 @@ TEST_CASE("GridEngine: diamond graph sums correctly after propagation") {
     res->prepare(48000.f);
     res->step_block(3); // 3 hops: src→gain_a/b (1), gain_a/b→sum (2), sum reads (3)
 
-    REQUIRE_THAT(res->module(i_sum)->outputs[0].voltage,
-                 Catch::Matchers::WithinAbs(5.f, 1e-6f));
+    REQUIRE_THAT(res->module(i_sum)->outputs[0].voltage, Catch::Matchers::WithinAbs(5.f, 1e-6f));
 }
 
 TEST_CASE("GridEngine: step_block processes multiple blocks correctly") {
     GridGraph g;
-    int i_src = g.add_module(std::make_unique<ConstModule>(1.f));
-    auto res = g.build();
+    int       i_src = g.add_module(std::make_unique<ConstModule>(1.f));
+    auto      res   = g.build();
     REQUIRE(res.has_value());
 
     res->prepare(48000.f);
@@ -252,12 +249,11 @@ TEST_CASE("GridEngine: step_block processes multiple blocks correctly") {
     res->step_block(256);
 
     // ConstModule output is always 1.f regardless of frame count.
-    REQUIRE_THAT(res->module(i_src)->outputs[0].voltage,
-                 Catch::Matchers::WithinAbs(1.f, 1e-6f));
+    REQUIRE_THAT(res->module(i_src)->outputs[0].voltage, Catch::Matchers::WithinAbs(1.f, 1e-6f));
 }
 
 TEST_CASE("GridEngine: frame counter increments correctly") {
-    auto fc = std::make_unique<FrameCounterModule>();
+    auto  fc     = std::make_unique<FrameCounterModule>();
     auto* fc_ptr = fc.get();
 
     GridGraph g;
@@ -292,17 +288,15 @@ TEST_CASE("GridEngine::module returns nullptr for out-of-range index") {
 // the result to the tap.
 class TapParamModule : public GridModule {
   public:
-    explicit TapParamModule(float factor = 1.f)
-        : GridModule(1, 1), factor_(factor)
-    {
+    explicit TapParamModule(float factor = 1.f) : GridModule(1, 1), factor_(factor) {
         param_ports.push_back({"control/gain", 0});
         taps.push_back({"signal/level", 0.f});
     }
 
     void process(const GridProcessArgs&) override {
-        const float v       = inputs[0].voltage * factor_;
-        outputs[0].voltage  = v;
-        taps[0].value       = v;
+        const float v      = inputs[0].voltage * factor_;
+        outputs[0].voltage = v;
+        taps[0].value      = v;
     }
 
   private:
@@ -314,7 +308,7 @@ class DualTapModule : public GridModule {
   public:
     DualTapModule() : GridModule(0, 0) {
         taps.push_back({"signal/alpha", 0.f});
-        taps.push_back({"signal/beta",  0.f});
+        taps.push_back({"signal/beta", 0.f});
         alpha_val = 0.f;
         beta_val  = 0.f;
     }
@@ -399,8 +393,8 @@ TEST_CASE("tap_schema discovers two taps from a dual-tap module") {
 
 TEST_CASE("tap_schema aggregates taps across multiple modules") {
     GridGraph g;
-    g.add_module(std::make_unique<TapParamModule>());  // 1 tap
-    g.add_module(std::make_unique<DualTapModule>());   // 2 taps
+    g.add_module(std::make_unique<TapParamModule>()); // 1 tap
+    g.add_module(std::make_unique<DualTapModule>());  // 2 taps
     auto res = g.build();
     REQUIRE(res.has_value());
     res->prepare(48000.f);
@@ -481,8 +475,7 @@ TEST_CASE("tap_frame size matches tap_schema size") {
     REQUIRE(res.has_value());
     res->prepare(48000.f);
 
-    REQUIRE(res->tap_frame().size() ==
-            static_cast<std::size_t>(res->tap_schema().size()));
+    REQUIRE(res->tap_frame().size() == static_cast<std::size_t>(res->tap_schema().size()));
 }
 
 TEST_CASE("tap_frame tracks two taps independently") {
@@ -540,9 +533,9 @@ TEST_CASE("apply_params + step_block round-trip to tap_frame") {
 }
 
 TEST_CASE("apply_params with empty span is a no-op") {
-    auto* raw = new TapParamModule(1.f);
-    auto  ptr = std::unique_ptr<TapParamModule>(raw);
-    raw->inputs[0].voltage = 7.f;  // pre-set
+    auto* raw              = new TapParamModule(1.f);
+    auto  ptr              = std::unique_ptr<TapParamModule>(raw);
+    raw->inputs[0].voltage = 7.f; // pre-set
 
     GridGraph g;
     g.add_module(std::move(ptr));
@@ -550,7 +543,7 @@ TEST_CASE("apply_params with empty span is a no-op") {
     REQUIRE(res.has_value());
     res->prepare(48000.f);
 
-    res->apply_params({});  // empty span — should not clear the port
+    res->apply_params({}); // empty span — should not clear the port
 
     // Input unchanged from the value we set before build.
     // Note: prepare() doesn't zero ports, so the pre-set value survives.
@@ -559,7 +552,7 @@ TEST_CASE("apply_params with empty span is a no-op") {
 
 TEST_CASE("apply_params ignores extra frame entries beyond port_schema size") {
     GridGraph g;
-    g.add_module(std::make_unique<TapParamModule>());  // 1 named port
+    g.add_module(std::make_unique<TapParamModule>()); // 1 named port
     auto res = g.build();
     REQUIRE(res.has_value());
     res->prepare(48000.f);

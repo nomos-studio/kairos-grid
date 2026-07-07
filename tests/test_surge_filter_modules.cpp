@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Tests for Surge XT sst-filters module wrappers.
 
-#include <kairos_grid/surge/surge_filter_module.hpp>
 #include <kairos_grid/grid_engine.hpp>
 #include <kairos_grid/grid_graph.hpp>
+#include <kairos_grid/surge/surge_filter_module.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -17,8 +17,7 @@ using namespace kairos_grid::surge;
 // Helpers
 // ---------------------------------------------------------------------------
 
-static GridEngine build_filter(std::unique_ptr<GridModule> m, float sr = 48000.f)
-{
+static GridEngine build_filter(std::unique_ptr<GridModule> m, float sr = 48000.f) {
     GridGraph g;
     g.add_module(std::move(m));
     auto res = g.build();
@@ -31,15 +30,13 @@ static GridEngine build_filter(std::unique_ptr<GridModule> m, float sr = 48000.f
 // VintageLadderModule
 // ---------------------------------------------------------------------------
 
-TEST_CASE("VintageLadderModule: constructs with 4 inputs and 2 outputs")
-{
+TEST_CASE("VintageLadderModule: constructs with 4 inputs and 2 outputs") {
     VintageLadderModule m;
-    REQUIRE(m.inputs.size()  == 4);
+    REQUIRE(m.inputs.size() == 4);
     REQUIRE(m.outputs.size() == 2);
 }
 
-TEST_CASE("VintageLadderModule: passes DC through at reso=0, cutoff=127")
-{
+TEST_CASE("VintageLadderModule: passes DC through at reso=0, cutoff=127") {
     auto  mod_ptr = std::make_unique<VintageLadderModule>();
     auto* mod     = mod_ptr.get();
 
@@ -49,7 +46,7 @@ TEST_CASE("VintageLadderModule: passes DC through at reso=0, cutoff=127")
     REQUIRE(res.has_value());
     res->prepare(48000.f);
 
-    mod->inputs[0].voltage = 5.f;   // full-scale L
+    mod->inputs[0].voltage = 5.f; // full-scale L
     mod->inputs[1].voltage = 0.f;
     mod->inputs[2].voltage = 127.f; // cutoff wide open
     mod->inputs[3].voltage = 0.f;   // zero resonance
@@ -61,11 +58,10 @@ TEST_CASE("VintageLadderModule: passes DC through at reso=0, cutoff=127")
 
     // With cutoff fully open and zero resonance the filter is nearly unity.
     REQUIRE(std::isfinite(mod->outputs[0].voltage));
-    REQUIRE(std::abs(mod->outputs[0].voltage) > 0.5f);  // significant pass-through
+    REQUIRE(std::abs(mod->outputs[0].voltage) > 0.5f); // significant pass-through
 }
 
-TEST_CASE("VintageLadderModule: attenuates at low cutoff")
-{
+TEST_CASE("VintageLadderModule: attenuates at low cutoff") {
     auto  mod_ptr = std::make_unique<VintageLadderModule>();
     auto* mod     = mod_ptr.get();
 
@@ -78,7 +74,7 @@ TEST_CASE("VintageLadderModule: attenuates at low cutoff")
     // Drive with full-scale signal, very low cutoff.
     mod->inputs[0].voltage = 5.f;
     mod->inputs[1].voltage = 0.f;
-    mod->inputs[2].voltage = 20.f;  // ~27 Hz
+    mod->inputs[2].voltage = 20.f; // ~27 Hz
     mod->inputs[3].voltage = 0.f;
 
     for (int i = 0; i < 2048; ++i)
@@ -89,8 +85,7 @@ TEST_CASE("VintageLadderModule: attenuates at low cutoff")
     REQUIRE(std::abs(mod->outputs[0].voltage) < 4.f);
 }
 
-TEST_CASE("VintageLadderModule: output bounded after sustained signal")
-{
+TEST_CASE("VintageLadderModule: output bounded after sustained signal") {
     auto  mod_ptr = std::make_unique<VintageLadderModule>();
     auto* mod     = mod_ptr.get();
 
@@ -102,7 +97,7 @@ TEST_CASE("VintageLadderModule: output bounded after sustained signal")
 
     mod->inputs[0].voltage = 1.f;
     mod->inputs[1].voltage = 1.f;
-    mod->inputs[2].voltage = 69.f;   // A4
+    mod->inputs[2].voltage = 69.f; // A4
     mod->inputs[3].voltage = 0.5f;
 
     bool finite  = true;
@@ -111,8 +106,14 @@ TEST_CASE("VintageLadderModule: output bounded after sustained signal")
         res->step_block(1);
         const float L = mod->outputs[0].voltage;
         const float R = mod->outputs[1].voltage;
-        if (!std::isfinite(L) || !std::isfinite(R))   { finite  = false; break; }
-        if (std::abs(L) > 6.f || std::abs(R) > 6.f)  { bounded = false; break; }
+        if (!std::isfinite(L) || !std::isfinite(R)) {
+            finite = false;
+            break;
+        }
+        if (std::abs(L) > 6.f || std::abs(R) > 6.f) {
+            bounded = false;
+            break;
+        }
     }
     REQUIRE(finite);
     REQUIRE(bounded);
@@ -122,15 +123,13 @@ TEST_CASE("VintageLadderModule: output bounded after sustained signal")
 // DiodeLadderModule
 // ---------------------------------------------------------------------------
 
-TEST_CASE("DiodeLadderModule: constructs correctly")
-{
+TEST_CASE("DiodeLadderModule: constructs correctly") {
     DiodeLadderModule m;
-    REQUIRE(m.inputs.size()  == 4);
+    REQUIRE(m.inputs.size() == 4);
     REQUIRE(m.outputs.size() == 2);
 }
 
-TEST_CASE("DiodeLadderModule: output is finite after warm-up")
-{
+TEST_CASE("DiodeLadderModule: output is finite after warm-up") {
     auto  mod_ptr = std::make_unique<DiodeLadderModule>();
     auto* mod     = mod_ptr.get();
 
@@ -142,7 +141,7 @@ TEST_CASE("DiodeLadderModule: output is finite after warm-up")
 
     mod->inputs[0].voltage = 2.f;
     mod->inputs[1].voltage = 2.f;
-    mod->inputs[2].voltage = 60.f;   // C4
+    mod->inputs[2].voltage = 60.f; // C4
     mod->inputs[3].voltage = 0.3f;
 
     res->step_block(4800);
@@ -155,8 +154,7 @@ TEST_CASE("DiodeLadderModule: output is finite after warm-up")
 // K35 filters
 // ---------------------------------------------------------------------------
 
-TEST_CASE("K35LPModule: output is finite and bounded")
-{
+TEST_CASE("K35LPModule: output is finite and bounded") {
     auto  mod_ptr = std::make_unique<K35LPModule>();
     auto* mod     = mod_ptr.get();
 
@@ -174,9 +172,7 @@ TEST_CASE("K35LPModule: output is finite and bounded")
     bool ok = true;
     for (int i = 0; i < 9600; ++i) {
         res->step_block(1);
-        if (!std::isfinite(mod->outputs[0].voltage) ||
-            std::abs(mod->outputs[0].voltage) > 8.f)
-        {
+        if (!std::isfinite(mod->outputs[0].voltage) || std::abs(mod->outputs[0].voltage) > 8.f) {
             ok = false;
             break;
         }
@@ -184,8 +180,7 @@ TEST_CASE("K35LPModule: output is finite and bounded")
     REQUIRE(ok);
 }
 
-TEST_CASE("K35HPModule: output is finite and bounded")
-{
+TEST_CASE("K35HPModule: output is finite and bounded") {
     auto  mod_ptr = std::make_unique<K35HPModule>();
     auto* mod     = mod_ptr.get();
 
@@ -203,9 +198,7 @@ TEST_CASE("K35HPModule: output is finite and bounded")
     bool ok = true;
     for (int i = 0; i < 9600; ++i) {
         res->step_block(1);
-        if (!std::isfinite(mod->outputs[0].voltage) ||
-            std::abs(mod->outputs[0].voltage) > 8.f)
-        {
+        if (!std::isfinite(mod->outputs[0].voltage) || std::abs(mod->outputs[0].voltage) > 8.f) {
             ok = false;
             break;
         }
@@ -217,8 +210,7 @@ TEST_CASE("K35HPModule: output is finite and bounded")
 // OBXD 4-pole
 // ---------------------------------------------------------------------------
 
-TEST_CASE("OBXD4PoleModule: output is finite and bounded")
-{
+TEST_CASE("OBXD4PoleModule: output is finite and bounded") {
     auto  mod_ptr = std::make_unique<OBXD4PoleModule>();
     auto* mod     = mod_ptr.get();
 
@@ -236,9 +228,7 @@ TEST_CASE("OBXD4PoleModule: output is finite and bounded")
     bool ok = true;
     for (int i = 0; i < 9600; ++i) {
         res->step_block(1);
-        if (!std::isfinite(mod->outputs[0].voltage) ||
-            std::abs(mod->outputs[0].voltage) > 8.f)
-        {
+        if (!std::isfinite(mod->outputs[0].voltage) || std::abs(mod->outputs[0].voltage) > 8.f) {
             ok = false;
             break;
         }
@@ -250,8 +240,7 @@ TEST_CASE("OBXD4PoleModule: output is finite and bounded")
 // Biquad filters (LP12, LP24, HP12, HP24, BP12, BP24)
 // ---------------------------------------------------------------------------
 
-TEST_CASE("LP12Module: output is finite and bounded")
-{
+TEST_CASE("LP12Module: output is finite and bounded") {
     auto  mod_ptr = std::make_unique<LP12Module>();
     auto* mod     = mod_ptr.get();
 
@@ -268,9 +257,7 @@ TEST_CASE("LP12Module: output is finite and bounded")
     bool ok = true;
     for (int i = 0; i < 4800; ++i) {
         res->step_block(1);
-        if (!std::isfinite(mod->outputs[0].voltage) ||
-            std::abs(mod->outputs[0].voltage) > 8.f)
-        {
+        if (!std::isfinite(mod->outputs[0].voltage) || std::abs(mod->outputs[0].voltage) > 8.f) {
             ok = false;
             break;
         }
@@ -278,8 +265,7 @@ TEST_CASE("LP12Module: output is finite and bounded")
     REQUIRE(ok);
 }
 
-TEST_CASE("HP24Module: output is finite and bounded")
-{
+TEST_CASE("HP24Module: output is finite and bounded") {
     auto  mod_ptr = std::make_unique<HP24Module>();
     auto* mod     = mod_ptr.get();
 
@@ -290,15 +276,13 @@ TEST_CASE("HP24Module: output is finite and bounded")
     res->prepare(48000.f);
 
     mod->inputs[0].voltage = 1.f;
-    mod->inputs[2].voltage = 48.f;   // C3
+    mod->inputs[2].voltage = 48.f; // C3
     mod->inputs[3].voltage = 0.3f;
 
     bool ok = true;
     for (int i = 0; i < 4800; ++i) {
         res->step_block(1);
-        if (!std::isfinite(mod->outputs[0].voltage) ||
-            std::abs(mod->outputs[0].voltage) > 8.f)
-        {
+        if (!std::isfinite(mod->outputs[0].voltage) || std::abs(mod->outputs[0].voltage) > 8.f) {
             ok = false;
             break;
         }
@@ -311,11 +295,10 @@ TEST_CASE("HP24Module: output is finite and bounded")
 // a raw DC signal through a filter to verify the graph plumbing.)
 // ---------------------------------------------------------------------------
 
-TEST_CASE("Filter modules: two different filters in parallel graph (no crash)")
-{
+TEST_CASE("Filter modules: two different filters in parallel graph (no crash)") {
     GridGraph g;
-    int i_lp = g.add_module(std::make_unique<VintageLadderModule>());
-    int i_hp = g.add_module(std::make_unique<K35HPModule>());
+    int       i_lp = g.add_module(std::make_unique<VintageLadderModule>());
+    int       i_hp = g.add_module(std::make_unique<K35HPModule>());
 
     auto res = g.build();
     REQUIRE(res.has_value());

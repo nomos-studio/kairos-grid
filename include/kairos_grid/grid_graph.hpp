@@ -11,9 +11,9 @@
 namespace kairos_grid {
 
 enum class graph_error {
-    cycle_detected,        // graph is not a DAG; feedback must be inside a GridModule
-    invalid_module_index,  // cable references a module index out of range
-    invalid_port_index,    // cable references a port index out of range
+    cycle_detected,       // graph is not a DAG; feedback must be inside a GridModule
+    invalid_module_index, // cable references a module index out of range
+    invalid_port_index,   // cable references a port index out of range
 };
 
 // Builder for a GridEngine.

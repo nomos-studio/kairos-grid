@@ -32,16 +32,16 @@
 // One performance tap entry.
 // All fields are valid until the next activate() or reset().
 typedef struct {
-    uint32_t    id;    // stable index into tap_frame[] for this session
-    const char* name;  // e.g. "signal/envelope" — UTF-8, null-terminated
+    uint32_t    id;   // stable index into tap_frame[] for this session
+    const char* name; // e.g. "signal/envelope" — UTF-8, null-terminated
 } clap_kairos_tap_entry_t;
 
 // Snapshot of all performance taps registered at the last activate() call.
 // epoch increments every time the schema changes (activate or reset).
 typedef struct {
-    uint32_t                       epoch;    // schema generation counter
-    uint32_t                       count;    // number of valid entries
-    const clap_kairos_tap_entry_t* entries;  // [count] entries; null when count == 0
+    uint32_t                       epoch;   // schema generation counter
+    uint32_t                       count;   // number of valid entries
+    const clap_kairos_tap_entry_t* entries; // [count] entries; null when count == 0
 } clap_kairos_tap_schema_t;
 
 // Plugin-side vtable returned by get_extension(CLAP_EXT_KAIROS_TAP_BUS).
@@ -50,12 +50,12 @@ typedef struct {
     // The returned pointer is owned by the plugin and is valid until the next
     // activate() or reset() call.  Never returns null after a successful
     // activate().
-    const clap_kairos_tap_schema_t* (CLAP_ABI *get_schema)(const clap_plugin_t* plugin);
+    const clap_kairos_tap_schema_t*(CLAP_ABI* get_schema)(const clap_plugin_t* plugin);
 
     // Return tap values from the most recent process() call.
     // *out_count is set to schema->count.
     // Returns null (and sets *out_count = 0) if the engine has no taps or has
     // not yet been activated.
     // The pointer is valid until the next process() call on the audio thread.
-    const float* (CLAP_ABI *get_tap_frame)(const clap_plugin_t* plugin, uint32_t* out_count);
+    const float*(CLAP_ABI* get_tap_frame)(const clap_plugin_t* plugin, uint32_t* out_count);
 } clap_plugin_tap_bus_t;

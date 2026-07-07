@@ -25,21 +25,21 @@
 // stmlib uses ARM-target inline assembly that clang flags on Apple Silicon host
 // builds; suppress those diagnostics when including the MI headers.
 #if defined(__clang__)
-#  pragma clang diagnostic push
-#  pragma clang diagnostic ignored "-Wasm-operand-widths"
-#  pragma clang diagnostic ignored "-Wunused-parameter"
-#  pragma clang diagnostic ignored "-Wunused-local-typedef"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wasm-operand-widths"
+#pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic ignored "-Wunused-local-typedef"
 #elif defined(__GNUC__)
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wunused-parameter"
-#  pragma GCC diagnostic ignored "-Wunused-local-typedefs"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wunused-local-typedefs"
 #endif
 #include <plaits/dsp/voice.h>
 #include <stmlib/utils/buffer_allocator.h>
 #if defined(__clang__)
-#  pragma clang diagnostic pop
+#pragma clang diagnostic pop
 #elif defined(__GNUC__)
-#  pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
 #endif
 
 namespace kairos_grid::mi {
@@ -50,18 +50,18 @@ class PlaitsModule : public GridModule {
         allocator_.Init(memory_, sizeof(memory_));
         voice_.Init(&allocator_);
 
-        patch_           = {};
-        patch_.note      = 60.f;
-        patch_.harmonics = 0.5f;
-        patch_.timbre    = 0.5f;
-        patch_.morph     = 0.5f;
-        patch_.decay     = 0.5f;
+        patch_            = {};
+        patch_.note       = 60.f;
+        patch_.harmonics  = 0.5f;
+        patch_.timbre     = 0.5f;
+        patch_.morph      = 0.5f;
+        patch_.decay      = 0.5f;
         patch_.lpg_colour = 0.f;
-        patch_.engine    = 0;
+        patch_.engine     = 0;
 
-        mods_                    = {};
-        mods_.trigger_patched    = true;
-        mods_.level_patched      = true;
+        mods_                 = {};
+        mods_.trigger_patched = true;
+        mods_.level_patched   = true;
 
         buf_idx_ = plaits::kBlockSize; // force refill on first process()
     }
@@ -73,8 +73,10 @@ class PlaitsModule : public GridModule {
             patch_.timbre    = clamp01(inputs[2].voltage);
             patch_.morph     = clamp01(inputs[3].voltage);
             patch_.engine    = static_cast<int>(inputs[6].voltage + 0.5f);
-            if (patch_.engine < 0)  patch_.engine = 0;
-            if (patch_.engine > 15) patch_.engine = 15;
+            if (patch_.engine < 0)
+                patch_.engine = 0;
+            if (patch_.engine > 15)
+                patch_.engine = 15;
 
             mods_.trigger = inputs[4].voltage;
             mods_.level   = clamp01(inputs[5].voltage);
@@ -83,15 +85,17 @@ class PlaitsModule : public GridModule {
             buf_idx_ = 0;
         }
 
-        const auto& f = frames_[buf_idx_++];
-        outputs[0].voltage = static_cast<float>(f.out)  / 32768.f;
+        const auto& f      = frames_[buf_idx_++];
+        outputs[0].voltage = static_cast<float>(f.out) / 32768.f;
         outputs[1].voltage = static_cast<float>(f.aux) / 32768.f;
     }
 
   private:
     static float clamp01(float v) noexcept {
-        if (v < 0.f) return 0.f;
-        if (v > 1.f) return 1.f;
+        if (v < 0.f)
+            return 0.f;
+        if (v > 1.f)
+            return 1.f;
         return v;
     }
 

@@ -55,10 +55,10 @@ class AudioInputModule : public GridModule {
     }
 
   private:
-    float* const* bufs_    {nullptr};
-    uint32_t      n_ch_    {0};
+    float* const* bufs_{nullptr};
+    uint32_t      n_ch_{0};
     uint32_t      n_frames_{0};
-    uint32_t      frame_   {0};
+    uint32_t      frame_{0};
 };
 
 // ---------------------------------------------------------------------------
@@ -99,19 +99,23 @@ class AudioOutputModule : public GridModule {
     }
 
     void process(const GridProcessArgs&) override {
-        if (!bufs_ || frame_ >= n_frames_) { ++frame_; return; }
+        if (!bufs_ || frame_ >= n_frames_) {
+            ++frame_;
+            return;
+        }
         for (uint32_t c = 0; c < k_num_inputs; ++c)
-            if (c < n_ch_) bufs_[c][frame_] = inputs[c].voltage;
+            if (c < n_ch_)
+                bufs_[c][frame_] = inputs[c].voltage;
         for (uint32_t c = k_num_inputs; c < n_ch_; ++c)
             bufs_[c][frame_] = 0.f;
         ++frame_;
     }
 
   private:
-    float**  bufs_    {nullptr};
-    uint32_t n_ch_    {0};
+    float**  bufs_{nullptr};
+    uint32_t n_ch_{0};
     uint32_t n_frames_{0};
-    uint32_t frame_   {0};
+    uint32_t frame_{0};
 };
 
 } // namespace kairos_grid

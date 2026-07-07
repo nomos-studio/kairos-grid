@@ -11,12 +11,11 @@
 
 #include <expected>
 namespace kairos_grid {
-template <typename T, typename E> using result     = std::expected<T, E>;
-template <typename E>             using unexpected = std::unexpected<E>;
+template <typename T, typename E> using result = std::expected<T, E>;
+template <typename E> using unexpected         = std::unexpected<E>;
 } // namespace kairos_grid
 
 #else
-
 
 namespace kairos_grid {
 

@@ -44,7 +44,6 @@ typedef struct {
     // Returns false if: new_wasm_path is null/empty, the file is unreadable,
     // no WASM patch is currently loaded, or the new module has different I/O counts.
     // Called from the main thread only.
-    bool (CLAP_ABI *request)(const clap_plugin_t* plugin,
-                             const char* new_wasm_path,
-                             const char* old_wasm_path);
+    bool(CLAP_ABI* request)(const clap_plugin_t* plugin, const char* new_wasm_path,
+                            const char* old_wasm_path);
 } clap_kairos_hot_swap_t;

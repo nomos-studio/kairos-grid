@@ -64,8 +64,8 @@ TEST_CASE("WasmGridModule: linker resolves env._sinf for os.osc patch", "[wasm][
 
     // Shell out to faust — skip this test gracefully if faust is not on PATH.
     const int rc = std::system(
-        ("faust -lang wasm " + std::string(dsp_path) +
-         " -o " + wasm_path + " > /dev/null 2>&1").c_str());
+        ("faust -lang wasm " + std::string(dsp_path) + " -o " + wasm_path + " > /dev/null 2>&1")
+            .c_str());
     if (rc != 0) {
         std::remove(dsp_path);
         SKIP("faust not available — skipping linker test");
@@ -87,7 +87,8 @@ TEST_CASE("WasmGridModule: linker resolves env._sinf for os.osc patch", "[wasm][
 
     std::remove(dsp_path);
     std::remove(wasm_path);
-    std::remove((std::string(wasm_path).substr(0, std::string(wasm_path).rfind('.')) + ".json").c_str());
+    std::remove(
+        (std::string(wasm_path).substr(0, std::string(wasm_path).rfind('.')) + ".json").c_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -115,12 +116,12 @@ TEST_CASE("WasmGridModule: sine_stereo port layout", "[wasm][integration]") {
     REQUIRE(m != nullptr);
 
     // Fixture: 0 audio in, 2 audio out, 3 params.
-    REQUIRE(m->n_audio_in()  == 0);
+    REQUIRE(m->n_audio_in() == 0);
     REQUIRE(m->n_audio_out() == 2);
-    REQUIRE(m->n_params()    == 3);
+    REQUIRE(m->n_params() == 3);
 
     // Total GridModule ports.
-    REQUIRE(m->inputs.size()  == 3u); // 0 audio + 3 param
+    REQUIRE(m->inputs.size() == 3u); // 0 audio + 3 param
     REQUIRE(m->outputs.size() == 2u);
 
     // param_ports: raw labels before stem prefix is applied.
@@ -179,9 +180,9 @@ TEST_CASE("WasmGridModule: left and right outputs diverge with detune", "[wasm][
     const GridProcessArgs args{48000.f, 1.f / 48000.f, 0};
     m->prepare(args);
 
-    m->inputs[0].voltage = 1.0f;    // amp
-    m->inputs[1].voltage = 0.01f;   // detune = 1%
-    m->inputs[2].voltage = 440.0f;  // freq
+    m->inputs[0].voltage = 1.0f;   // amp
+    m->inputs[1].voltage = 0.01f;  // detune = 1%
+    m->inputs[2].voltage = 440.0f; // freq
 
     // Run long enough for the phase difference to accumulate visibly.
     float diff_sum = 0.f;

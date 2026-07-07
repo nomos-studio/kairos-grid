@@ -36,14 +36,14 @@ struct TapPort {
 // apply_params() routes them to the corresponding input port voltages.
 struct ParamPort {
     std::string name;
-    int         port_idx;  // index into inputs[]
+    int         port_idx; // index into inputs[]
 };
 
 // Per-sample timing context passed to every GridModule::process() call.
 struct GridProcessArgs {
-    float   sample_rate;   // current sample rate in Hz
-    float   sample_time;   // 1.f / sample_rate, in seconds
-    int64_t frame;         // audio samples since GridEngine::prepare() was called
+    float   sample_rate; // current sample rate in Hz
+    float   sample_time; // 1.f / sample_rate, in seconds
+    int64_t frame;       // audio samples since GridEngine::prepare() was called
 };
 
 // Abstract base class for all modules in the kairos-grid sample-rate engine.
@@ -92,12 +92,12 @@ class GridModule {
     // Postcondition: outputs[] contain voltages to be routed downstream.
     virtual void process(const GridProcessArgs& args) = 0;
 
-    std::vector<GridPort>  inputs;
-    std::vector<GridPort>  outputs;
+    std::vector<GridPort> inputs;
+    std::vector<GridPort> outputs;
 
     // Performance taps — declared by the module (typically in its constructor).
     // The engine harvests these into the tap frame after each step_block().
-    std::vector<TapPort>   taps;
+    std::vector<TapPort> taps;
 
     // Named param-bus inputs — declares which input ports are addressable
     // by name via apply_params(). Populated in the constructor or prepare().

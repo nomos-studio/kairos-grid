@@ -22,8 +22,10 @@ class OnePoleModule : public GridModule {
 
     void process(const GridProcessArgs&) override {
         float freq = inputs[1].voltage;
-        if (freq < 0.f)    freq = 0.f;
-        if (freq > 0.497f) freq = 0.497f;
+        if (freq < 0.f)
+            freq = 0.f;
+        if (freq > 0.497f)
+            freq = 0.497f;
 
         pole_.set_f<stmlib::FREQUENCY_DIRTY>(freq);
 

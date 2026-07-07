@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Tests for MI DSP module wrappers: SvfModule, OnePoleModule, PlaitsModule.
 
-#include <kairos_grid/mi/svf_module.hpp>
-#include <kairos_grid/mi/one_pole_module.hpp>
-#include <kairos_grid/mi/plaits_module.hpp>
 #include <kairos_grid/grid_engine.hpp>
 #include <kairos_grid/grid_graph.hpp>
+#include <kairos_grid/mi/one_pole_module.hpp>
+#include <kairos_grid/mi/plaits_module.hpp>
+#include <kairos_grid/mi/svf_module.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -32,7 +32,7 @@ static GridEngine build_single(std::unique_ptr<GridModule> m) {
 
 TEST_CASE("SvfModule: constructs with 3 inputs and 3 outputs") {
     SvfModule m;
-    REQUIRE(m.inputs.size()  == 3);
+    REQUIRE(m.inputs.size() == 3);
     REQUIRE(m.outputs.size() == 3);
 }
 
@@ -57,8 +57,7 @@ TEST_CASE("SvfModule: DC input passes through LP at very low cutoff") {
     res->step_block(4800); // 100 ms at 48 kHz
 
     // LP output should have converged close to 1.0.
-    REQUIRE_THAT(mod->outputs[0].voltage,
-                 Catch::Matchers::WithinAbs(1.f, 0.05f));
+    REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(1.f, 0.05f));
 }
 
 TEST_CASE("SvfModule: HP output is near zero for DC at very low cutoff") {
@@ -78,8 +77,7 @@ TEST_CASE("SvfModule: HP output is near zero for DC at very low cutoff") {
     res->step_block(4800);
 
     // HP should be near zero after the transient settles.
-    REQUIRE_THAT(mod->outputs[1].voltage,
-                 Catch::Matchers::WithinAbs(0.f, 0.05f));
+    REQUIRE_THAT(mod->outputs[1].voltage, Catch::Matchers::WithinAbs(0.f, 0.05f));
 }
 
 TEST_CASE("SvfModule: LP + HP + BP sum approximately equals input") {
@@ -118,7 +116,7 @@ TEST_CASE("SvfModule: LP + HP + BP sum approximately equals input") {
 
 TEST_CASE("OnePoleModule: constructs with 2 inputs and 2 outputs") {
     OnePoleModule m;
-    REQUIRE(m.inputs.size()  == 2);
+    REQUIRE(m.inputs.size() == 2);
     REQUIRE(m.outputs.size() == 2);
 }
 
@@ -158,8 +156,7 @@ TEST_CASE("OnePoleModule: DC settles to input at very low cutoff") {
 
     res->step_block(9600); // 200 ms
 
-    REQUIRE_THAT(mod->outputs[0].voltage,
-                 Catch::Matchers::WithinAbs(1.f, 0.05f));
+    REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(1.f, 0.05f));
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +165,7 @@ TEST_CASE("OnePoleModule: DC settles to input at very low cutoff") {
 
 TEST_CASE("PlaitsModule: constructs with 7 inputs and 2 outputs") {
     PlaitsModule m;
-    REQUIRE(m.inputs.size()  == 7);
+    REQUIRE(m.inputs.size() == 7);
     REQUIRE(m.outputs.size() == 2);
 }
 
@@ -183,13 +180,13 @@ TEST_CASE("PlaitsModule: produces non-zero output after a few blocks") {
     res->prepare(48000.f);
 
     // MIDI A4 = 69, engine 0 (VA oscillator), trigger on.
-    mod->inputs[0].voltage = 69.f;  // note
-    mod->inputs[1].voltage = 0.5f;  // harmonics
-    mod->inputs[2].voltage = 0.5f;  // timbre
-    mod->inputs[3].voltage = 0.5f;  // morph
-    mod->inputs[4].voltage = 1.f;   // trigger
-    mod->inputs[5].voltage = 1.f;   // level
-    mod->inputs[6].voltage = 0.f;   // engine 0
+    mod->inputs[0].voltage = 69.f; // note
+    mod->inputs[1].voltage = 0.5f; // harmonics
+    mod->inputs[2].voltage = 0.5f; // timbre
+    mod->inputs[3].voltage = 0.5f; // morph
+    mod->inputs[4].voltage = 1.f;  // trigger
+    mod->inputs[5].voltage = 1.f;  // level
+    mod->inputs[6].voltage = 0.f;  // engine 0
 
     // Run enough samples to see sustained output (past the LPG attack).
     res->step_block(4800); // 100 ms
@@ -214,7 +211,7 @@ TEST_CASE("PlaitsModule: output stays within ±1 for typical inputs") {
     REQUIRE(res.has_value());
     res->prepare(48000.f);
 
-    mod->inputs[0].voltage = 60.f;  // C4
+    mod->inputs[0].voltage = 60.f; // C4
     mod->inputs[1].voltage = 0.5f;
     mod->inputs[2].voltage = 0.5f;
     mod->inputs[3].voltage = 0.5f;
@@ -238,8 +235,8 @@ TEST_CASE("PlaitsModule: output stays within ±1 for typical inputs") {
 TEST_CASE("PlaitsModule: integrates into GridGraph chain with SvfModule") {
     // plaits → svf, check the chain builds and produces finite output.
     GridGraph g;
-    int i_plaits = g.add_module(std::make_unique<PlaitsModule>());
-    int i_svf    = g.add_module(std::make_unique<SvfModule>());
+    int       i_plaits = g.add_module(std::make_unique<PlaitsModule>());
+    int       i_svf    = g.add_module(std::make_unique<SvfModule>());
     g.add_cable({i_plaits, 0, i_svf, 0}); // plaits.out → svf.in
 
     auto res = g.build();

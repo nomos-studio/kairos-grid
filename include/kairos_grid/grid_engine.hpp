@@ -14,10 +14,10 @@ namespace kairos_grid {
 // One entry in the tap schema — identifies a single performance tap by its
 // stable per-session ID and the module/tap indices needed to locate it.
 struct TapEntry {
-    int         id;          // index into the flat tap_frame() array
-    std::string name;        // e.g. "signal/envelope"
-    int         module_idx;  // which module owns this tap
-    int         tap_idx;     // index into that module's taps[] vector
+    int         id;         // index into the flat tap_frame() array
+    std::string name;       // e.g. "signal/envelope"
+    int         module_idx; // which module owns this tap
+    int         tap_idx;    // index into that module's taps[] vector
 };
 
 // Snapshot of all performance taps registered at the last prepare() call.
@@ -25,22 +25,22 @@ struct TapEntry {
 struct TapSchema {
     std::vector<TapEntry> entries;
     uint32_t              epoch{0};
-    int size() const noexcept { return static_cast<int>(entries.size()); }
+    int                   size() const noexcept { return static_cast<int>(entries.size()); }
 };
 
 // One entry in the port schema — identifies a named param-bus input port.
 struct PortEntry {
-    int         id;          // index into the apply_params() frame
-    std::string name;        // e.g. "env/cutoff"
-    int         module_idx;  // which module owns this port
-    int         port_idx;    // index into that module's inputs[] vector
+    int         id;         // index into the apply_params() frame
+    std::string name;       // e.g. "env/cutoff"
+    int         module_idx; // which module owns this port
+    int         port_idx;   // index into that module's inputs[] vector
 };
 
 // Snapshot of all named param-bus ports registered at the last prepare() call.
 struct PortSchema {
     std::vector<PortEntry> entries;
     uint32_t               epoch{0};
-    int size() const noexcept { return static_cast<int>(entries.size()); }
+    int                    size() const noexcept { return static_cast<int>(entries.size()); }
 };
 
 // A directed connection from one module's output port to another's input port.
@@ -68,9 +68,8 @@ struct GridCable {
 //   3. Read "sink" module input ports to fill CLAP audio output buffers.
 class GridEngine {
   public:
-    GridEngine(std::vector<std::unique_ptr<GridModule>> modules,
-               std::vector<GridCable>                   cables,
-               std::vector<int>                         order);
+    GridEngine(std::vector<std::unique_ptr<GridModule>> modules, std::vector<GridCable> cables,
+               std::vector<int> order);
 
     GridEngine(GridEngine&&) noexcept            = default;
     GridEngine& operator=(GridEngine&&) noexcept = default;
@@ -94,11 +93,11 @@ class GridEngine {
 
     // Non-owning access to a module by its index (as returned by GridGraph::add_module()).
     // Valid for the lifetime of this GridEngine. Returns nullptr if idx is out of range.
-    GridModule* module(int idx) noexcept;
+    GridModule*       module(int idx) noexcept;
     const GridModule* module(int idx) const noexcept;
 
     // Schema discovery — stable until the next prepare() call.
-    const TapSchema&  tap_schema()  const noexcept { return tap_schema_; }
+    const TapSchema&  tap_schema() const noexcept { return tap_schema_; }
     const PortSchema& port_schema() const noexcept { return port_schema_; }
 
     // Write named param-bus inputs before calling step_block().

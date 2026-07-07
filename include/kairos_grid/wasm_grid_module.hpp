@@ -37,7 +37,7 @@ namespace kairos_grid {
 //
 // Requires KAIROS_GRID_PLUGIN_HAS_WASM=1.
 
-struct WasmDspImpl;  // fully defined in wasm_grid_module.cpp
+struct WasmDspImpl; // fully defined in wasm_grid_module.cpp
 
 class WasmGridModule : public GridModule {
   public:
@@ -59,20 +59,20 @@ class WasmGridModule : public GridModule {
     void process(const GridProcessArgs& args) override;
 
     // Number of Faust audio inputs (excludes param ports).
-    int n_audio_in()  const noexcept { return n_audio_in_; }
+    int n_audio_in() const noexcept { return n_audio_in_; }
     // Number of Faust audio outputs.
     int n_audio_out() const noexcept { return n_audio_out_; }
     // Number of named parameter ports.
-    int n_params()    const noexcept { return n_params_; }
+    int n_params() const noexcept { return n_params_; }
 
   private:
-    WasmGridModule(std::unique_ptr<WasmDspImpl> impl,
-                   int n_audio_in, int n_audio_out, int n_params);
+    WasmGridModule(std::unique_ptr<WasmDspImpl> impl, int n_audio_in, int n_audio_out,
+                   int n_params);
 
     std::unique_ptr<WasmDspImpl> impl_;
-    int n_audio_in_{0};
-    int n_audio_out_{0};
-    int n_params_{0};
+    int                          n_audio_in_{0};
+    int                          n_audio_out_{0};
+    int                          n_params_{0};
 
     // Shadow values: last voltage written to each param port.
     // Indexed [0 .. n_params-1].  Initialised to NaN so the first process()

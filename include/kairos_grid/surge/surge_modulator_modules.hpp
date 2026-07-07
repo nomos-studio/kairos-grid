@@ -12,17 +12,17 @@ namespace kairos_grid::surge {
 
 namespace detail {
 
-// Minimal SRProvider for sst-basic-blocks modulators.
-//
-// envelope_rate_linear_nowrap(x) returns BLOCK_SIZE * 2^x / samplerate,
-// matching the SurgeStorage table formula analytically.
-struct EnvSRProvider {
-    float samplerate{48000.f};
+    // Minimal SRProvider for sst-basic-blocks modulators.
+    //
+    // envelope_rate_linear_nowrap(x) returns BLOCK_SIZE * 2^x / samplerate,
+    // matching the SurgeStorage table formula analytically.
+    struct EnvSRProvider {
+        float samplerate{48000.f};
 
-    float envelope_rate_linear_nowrap(float x) const noexcept {
-        return BLOCK_SIZE * std::exp2f(x) / samplerate;
-    }
-};
+        float envelope_rate_linear_nowrap(float x) const noexcept {
+            return BLOCK_SIZE * std::exp2f(x) / samplerate;
+        }
+    };
 
 } // namespace detail
 
@@ -62,8 +62,8 @@ class ADSRModule : public GridModule {
 
     ADSRModule() : GridModule(k_num_inputs, k_num_outputs), env_(&sr_) {
         taps.push_back({"signal/envelope", 0.f});
-        param_ports.push_back({"adsr/attack",  k_attack});
-        param_ports.push_back({"adsr/decay",   k_decay});
+        param_ports.push_back({"adsr/attack", k_attack});
+        param_ports.push_back({"adsr/decay", k_decay});
         param_ports.push_back({"adsr/sustain", k_sustain});
         param_ports.push_back({"adsr/release", k_release});
     }
@@ -80,14 +80,14 @@ class ADSRModule : public GridModule {
             env_.attackFrom(env_.output, 0.f, 1 /* linear */, true /* digital */);
         prev_gate_ = gate_now;
 
-        const float a = std::clamp(inputs[k_attack].voltage,  0.f, 1.f);
-        const float d = std::clamp(inputs[k_decay].voltage,   0.f, 1.f);
+        const float a = std::clamp(inputs[k_attack].voltage, 0.f, 1.f);
+        const float d = std::clamp(inputs[k_decay].voltage, 0.f, 1.f);
         const float s = std::clamp(inputs[k_sustain].voltage, 0.f, 1.f);
         const float r = std::clamp(inputs[k_release].voltage, 0.f, 1.f);
 
         env_.process(a, d, s, r, 1, 1, 1, gate_now);
 
-        const float v          = env_.output;
+        const float v              = env_.output;
         outputs[k_env_out].voltage = v;
         taps[0].value              = v;
     }
@@ -134,9 +134,9 @@ class SimpleLFOModule : public GridModule {
 
     SimpleLFOModule() : GridModule(k_num_inputs, k_num_outputs), lfo_(&sr_) {
         taps.push_back({"signal/lfo", 0.f});
-        param_ports.push_back({"lfo/rate",   k_rate});
+        param_ports.push_back({"lfo/rate", k_rate});
         param_ports.push_back({"lfo/deform", k_deform});
-        param_ports.push_back({"lfo/shape",  k_shape});
+        param_ports.push_back({"lfo/shape", k_shape});
         block_pos_ = BLOCK_SIZE;
     }
 

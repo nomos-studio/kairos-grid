@@ -15,18 +15,18 @@
 #include <kairos_grid/grid_module.hpp>
 
 #if defined(__clang__)
-#  pragma clang diagnostic push
-#  pragma clang diagnostic ignored "-Wasm-operand-widths"
-#  pragma clang diagnostic ignored "-Wunused-parameter"
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wasm-operand-widths"
+#pragma clang diagnostic ignored "-Wunused-parameter"
 #elif defined(__GNUC__)
-#  pragma GCC diagnostic push
-#  pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 #endif
 #include <stmlib/dsp/filter.h>
 #if defined(__clang__)
-#  pragma clang diagnostic pop
+#pragma clang diagnostic pop
 #elif defined(__GNUC__)
-#  pragma GCC diagnostic pop
+#pragma GCC diagnostic pop
 #endif
 
 namespace kairos_grid::mi {
@@ -40,16 +40,17 @@ class SvfModule : public GridModule {
         float q    = inputs[2].voltage;
 
         // Clamp to safe ranges for the approximation.
-        if (freq < 0.f)   freq = 0.f;
-        if (freq > 0.499f) freq = 0.499f;
+        if (freq < 0.f)
+            freq = 0.f;
+        if (freq > 0.499f)
+            freq = 0.499f;
         float resonance = 0.5f + q * 16.f;
 
         svf_.set_f_q<stmlib::FREQUENCY_FAST>(freq, resonance);
 
         float in = inputs[0].voltage;
         float lp, hp;
-        svf_.Process<stmlib::FILTER_MODE_LOW_PASS,
-                     stmlib::FILTER_MODE_HIGH_PASS>(in, &lp, &hp);
+        svf_.Process<stmlib::FILTER_MODE_LOW_PASS, stmlib::FILTER_MODE_HIGH_PASS>(in, &lp, &hp);
 
         outputs[0].voltage = lp;
         outputs[1].voltage = hp;

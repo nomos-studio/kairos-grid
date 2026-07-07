@@ -44,12 +44,12 @@ typedef struct {
     // Returns false if: edn_descriptor is null, len is 0, the descriptor
     // contains an unknown module type, or the graph has a cycle.
     // Called from the main thread only.
-    bool (CLAP_ABI *push_patch)(const clap_plugin_t* plugin,
-                                const char* edn_descriptor, uint32_t len);
+    bool(CLAP_ABI* push_patch)(const clap_plugin_t* plugin, const char* edn_descriptor,
+                               uint32_t len);
 
     // Return the EDN descriptor most recently accepted by push_patch().
     // Returns null until push_patch() has been called with a valid descriptor.
     // The returned pointer is valid until the next push_patch() call.
     // Called from the main thread only.
-    const char* (CLAP_ABI *get_patch)(const clap_plugin_t* plugin);
+    const char*(CLAP_ABI* get_patch)(const clap_plugin_t* plugin);
 } clap_plugin_patch_bus_t;
