@@ -172,6 +172,16 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
             },
             [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
             nullptr, nullptr};
+        // Triangular ADAA wavefolder — Buchla/Serge west-coast topology.
+        // Hard reflections at ±1; multi-fold at high drive; output bounded ±1.
+        // Inputs: in-l(0), in-r(1), drive(2, 0=unity, 1=16×).
+        r["folder"] = {
+            []() -> std::unique_ptr<GridModule> {
+                return std::make_unique<mi::WaveshaperModule>(&mi::WaveshaperModule::f_fold_tri,
+                                                              &mi::WaveshaperModule::F_fold_tri);
+            },
+            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
+            nullptr, nullptr};
 #endif
 #if defined(KAIROS_GRID_PLUGIN_HAS_SURGE)
         {

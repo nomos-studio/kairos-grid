@@ -14,6 +14,8 @@
 //   "ws-tanh" — tanh soft saturation (smooth, bounded ±1)
 //   "ws-soft" — cubic soft clip ((3x-x³)/2 for |x|≤1, ±1 beyond)
 //   "ws-fold" — sine wavefold (sin(π/2·x), folds every ±2 units of driven input)
+//   "folder"  — triangular wavefold (Buchla/Serge topology); folds every ±2 units with
+//               hard reflections; multi-fold at high drive; output bounded ±1
 //
 // Inputs:
 //   0  in-l   — audio left
@@ -94,6 +96,27 @@ class WaveshaperModule : public GridModule {
     static float F_fold(float x) {
         // F(x) = −(2/π)·cos(π/2·x).
         return k_neg2_over_pi * std::cos(k_pi_half * x);
+    }
+
+    // Triangular wavefold — Buchla/Serge topology.  Reflects at ±1 with hard corners,
+    // producing harmonic-rich multi-fold at high drive.  Period 4; output bounded ±1.
+    //
+    // Segment n (n = round(x/2)): slope alternates ±1 so ADAA antiderivative F is
+    // piecewise quadratic.  For segment n with local coordinate xr = x − 2n:
+    //   f(x) = (n odd) ? −xr : xr
+    //   F(x) = (n odd) ? 1 − xr²/2 : xr²/2
+    // F is continuous at every segment boundary (both sides evaluate to ½); valid as a
+    // global antiderivative regardless of how many fold points an ADAA interval spans.
+    static float f_fold_tri(float x) {
+        const int   n  = static_cast<int>(std::round(x * 0.5f));
+        const float xr = x - 2.0f * static_cast<float>(n);
+        return (n & 1) ? -xr : xr;
+    }
+    static float F_fold_tri(float x) {
+        const int   n  = static_cast<int>(std::round(x * 0.5f));
+        const float xr = x - 2.0f * static_cast<float>(n);
+        const float q  = 0.5f * xr * xr;
+        return (n & 1) ? 1.0f - q : q;
     }
 
   private:

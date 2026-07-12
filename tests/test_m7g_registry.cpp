@@ -225,7 +225,7 @@ TEST_CASE("m7g registry: ws-hard — push_patch succeeds and exposes drive param
 }
 
 TEST_CASE("m7g registry: all waveshaper types — push_patch returns true") {
-    static constexpr const char* k_types[] = {"ws-hard", "ws-tanh", "ws-soft", "ws-fold"};
+    static constexpr const char* k_types[] = {"ws-hard", "ws-tanh", "ws-soft", "ws-fold", "folder"};
 
     for (const auto* type : k_types) {
         const std::string edn = std::string("{:modules [{:type \"env\"} {:type \"audio-in\"}"
