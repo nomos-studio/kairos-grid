@@ -71,6 +71,30 @@
       }
     },
     {
+      "name": "airwindows",
+      "displayName": "Airwindows (dev)",
+      "description": "Dev build with Airwindows saturation module wrappers.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS":            "ON",
+        "KAIROS_GRID_BUILD_AIRWINDOWS":       "ON",
+        "CMAKE_EXPORT_COMPILE_COMMANDS":      "ON",
+        "CMAKE_BUILD_TYPE":                   "Debug"
+      }
+    },
+    {
+      "name": "ci-airwindows",
+      "displayName": "CI + Airwindows",
+      "description": "CI Release build with Airwindows saturation module wrappers.",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "KAIROS_GRID_BUILD_TESTS":      "ON",
+        "KAIROS_GRID_BUILD_AIRWINDOWS": "ON",
+        "CMAKE_BUILD_TYPE":             "Release"
+      }
+    },
+    {
       "name": "surge",
       "displayName": "Surge XT (dev)",
       "description": "Dev build with Surge XT wrappers. Set SURGE_SRC_DIR (and SURGE_SIMDE_PATH if external tree) to skip network fetch. PLUGIN disabled: Surge bundles its own clap target via clap-juce-extensions, which collides with the plugin preset's FetchContent clap. macOS deployment target pinned to 14.0 so JUCE tools build cleanly on macOS 15 (CGWindowListCreateImage is deprecated on 14.0, unavailable on 15.0).",
@@ -178,6 +202,8 @@
   "buildPresets": [
     { "name": "dev",         "configurePreset": "dev" },
     { "name": "ci",          "configurePreset": "ci" },
+    { "name": "airwindows",   "configurePreset": "airwindows" },
+    { "name": "ci-airwindows","configurePreset": "ci-airwindows" },
     { "name": "ci-mi",       "configurePreset": "ci-mi" },
     { "name": "ci-wasm",     "configurePreset": "ci-wasm" },
     { "name": "sanitize",    "configurePreset": "sanitize" },
@@ -194,6 +220,8 @@
   "testPresets": [
     { "name": "dev",         "configurePreset": "dev",         "output": { "outputOnFailure": true } },
     { "name": "ci",          "configurePreset": "ci",          "output": { "outputOnFailure": true } },
+    { "name": "airwindows",    "configurePreset": "airwindows",    "output": { "outputOnFailure": true } },
+    { "name": "ci-airwindows", "configurePreset": "ci-airwindows", "output": { "outputOnFailure": true } },
     { "name": "ci-mi",       "configurePreset": "ci-mi",       "output": { "outputOnFailure": true } },
     { "name": "ci-wasm",     "configurePreset": "ci-wasm",     "output": { "outputOnFailure": true } },
     { "name": "sanitize",    "configurePreset": "sanitize",    "output": { "outputOnFailure": true } },

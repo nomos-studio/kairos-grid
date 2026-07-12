@@ -31,6 +31,10 @@
 #include <kairos_grid/surge/surge_waveshaper_module.hpp>
 #endif
 
+#if defined(KAIROS_GRID_PLUGIN_HAS_AIRWINDOWS)
+#include <kairos_grid/airwindows/airwindows_module.hpp>
+#endif
+
 #if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
 #include <kairos_grid/clap_kairos_hot_swap.h>
 #include <kairos_grid/wasm_grid_module.hpp>
@@ -359,6 +363,29 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
             // Harmonic shapers (Chebyshev — add specific harmonic content)
             r["sst-harmonic2"] = {ws_make(WS::wst_cheby2), ws_setup, nullptr, nullptr};
             r["sst-harmonic3"] = {ws_make(WS::wst_cheby3), ws_setup, nullptr, nullptr};
+        }
+#endif
+#if defined(KAIROS_GRID_PLUGIN_HAS_AIRWINDOWS)
+        {
+            // Airwindows saturation modules — no external dependencies.
+            // Audio convention: ±1 V normalised full-scale; no internal scaling.
+            // aw-desk:   in-l(0), in-r(1) → out-l(0), out-r(1).  No params.
+            // aw-slew:   in-l(0), in-r(1), slew(2, [0,1]V) → out-l(0), out-r(1).
+            // aw-spiral: in-l(0), in-r(1), drive(2, [0,1]V), wet(3, [0,1]V)
+            //            → out-l(0), out-r(1).
+            using namespace airwindows;
+
+            r["aw-desk"] = {
+                []() -> std::unique_ptr<GridModule> { return std::make_unique<DeskModule>(); },
+                nullptr, nullptr, nullptr};
+
+            r["aw-slew"] = {
+                []() -> std::unique_ptr<GridModule> { return std::make_unique<SlewModule>(); },
+                nullptr, nullptr, nullptr};
+
+            r["aw-spiral"] = {
+                []() -> std::unique_ptr<GridModule> { return std::make_unique<SpiralModule>(); },
+                nullptr, nullptr, nullptr};
         }
 #endif
 #if defined(KAIROS_GRID_PLUGIN_HAS_WASM)

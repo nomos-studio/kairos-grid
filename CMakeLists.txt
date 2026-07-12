@@ -34,9 +34,10 @@ set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL
 option(KAIROS_GRID_BUILD_TESTS  "Build kairos-grid unit tests"       OFF)
 option(KAIROS_GRID_BUILD_ENGINE "Build the sample-rate engine library" ON)
 option(KAIROS_GRID_BUILD_PLUGIN "Build the kairos-grid CLAP plugin"   OFF)
-option(KAIROS_GRID_BUILD_MI     "Build MI DSP module wrappers (Plaits, SVF, OnePole)" OFF)
-option(KAIROS_GRID_BUILD_SURGE  "Build Surge XT oscillator/filter/effect wrappers"    OFF)
-option(KAIROS_GRID_BUILD_WASM   "Build Faust WASM module support (requires wasmtime)" OFF)
+option(KAIROS_GRID_BUILD_MI          "Build MI DSP module wrappers (Plaits, SVF, OnePole)" OFF)
+option(KAIROS_GRID_BUILD_SURGE       "Build Surge XT oscillator/filter/effect wrappers"    OFF)
+option(KAIROS_GRID_BUILD_AIRWINDOWS  "Build Airwindows saturation module wrappers"          OFF)
+option(KAIROS_GRID_BUILD_WASM        "Build Faust WASM module support (requires wasmtime)"  OFF)
 
 # ---------------------------------------------------------------------------
 # nomos-topology — header-only EDN key constants (nomos::topology).
@@ -241,6 +242,25 @@ if(KAIROS_GRID_BUILD_SURGE AND KAIROS_GRID_BUILD_ENGINE)
 endif() # KAIROS_GRID_BUILD_SURGE
 
 # ---------------------------------------------------------------------------
+# Airwindows saturation wrappers — zero external dependencies.
+# ---------------------------------------------------------------------------
+
+if(KAIROS_GRID_BUILD_AIRWINDOWS AND KAIROS_GRID_BUILD_ENGINE)
+
+    add_subdirectory(libs/airwindows)
+
+    # INTERFACE convenience target — engine headers + Airwindows DSP headers.
+    add_library(kairos-grid-airwindows-modules INTERFACE)
+    add_library(kairos_grid::airwindows-modules ALIAS kairos-grid-airwindows-modules)
+
+    target_link_libraries(kairos-grid-airwindows-modules INTERFACE
+        kairos_grid::engine
+        kairos_grid::airwindows
+    )
+
+endif() # KAIROS_GRID_BUILD_AIRWINDOWS
+
+# ---------------------------------------------------------------------------
 # CLAP plugin wrapper — adds CLAP SDK dependency.
 # Brings in the engine library transitively.
 # ---------------------------------------------------------------------------
@@ -281,6 +301,13 @@ if(KAIROS_GRID_BUILD_PLUGIN AND KAIROS_GRID_BUILD_ENGINE)
     if(TARGET kairos_grid::surge-modules)
         target_link_libraries(kairos-grid PRIVATE kairos_grid::surge-modules)
         target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_SURGE=1)
+    endif()
+
+    # Link Airwindows wrappers into the plugin when both are enabled.
+    # clap_plugin.cpp detects availability via KAIROS_GRID_PLUGIN_HAS_AIRWINDOWS.
+    if(TARGET kairos_grid::airwindows-modules)
+        target_link_libraries(kairos-grid PRIVATE kairos_grid::airwindows-modules)
+        target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_AIRWINDOWS=1)
     endif()
 
     # Link WASM module support into the plugin when enabled.
