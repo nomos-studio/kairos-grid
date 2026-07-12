@@ -16,8 +16,17 @@
 #include <kairos_grid/grid_graph.hpp>
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_MI)
+#include <kairos_grid/mi/lpg_module.hpp>
+#include <kairos_grid/mi/one_pole_module.hpp>
 #include <kairos_grid/mi/plaits_module.hpp>
 #include <kairos_grid/mi/svf_module.hpp>
+#endif
+
+#if defined(KAIROS_GRID_PLUGIN_HAS_SURGE)
+#include <kairos_grid/surge/surge_effect_module.hpp>
+#include <kairos_grid/surge/surge_filter_module.hpp>
+#include <kairos_grid/surge/surge_modulator_modules.hpp>
+#include <kairos_grid/surge/surge_osc_module.hpp>
 #endif
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
@@ -114,6 +123,168 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
                 };
             },
             nullptr, nullptr};
+        r["one-pole"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::OnePoleModule>(); },
+            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/freq", 1}}; },
+            nullptr, nullptr};
+        // Low-pass gate variants: "lpg" is clean (cv maps directly); "lpg-vactrol"
+        // adds asymmetric one-pole dynamics on the cv path with per-instance spread.
+        r["lpg"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::LpgModule>(false); },
+            [](GridModule* m, const std::string& pfx) {
+                m->param_ports = {{pfx + "/cv", 2}, {pfx + "/character", 4}};
+            },
+            nullptr, nullptr};
+        r["lpg-vactrol"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::LpgModule>(true); },
+            [](GridModule* m, const std::string& pfx) {
+                m->param_ports = {{pfx + "/cv", 2}, {pfx + "/decay", 3}, {pfx + "/character", 4}};
+            },
+            nullptr, nullptr};
+#endif
+#if defined(KAIROS_GRID_PLUGIN_HAS_SURGE)
+        {
+            // Shared setup lambdas — filters: cutoff at port 2, resonance at port 3.
+            const auto filter_setup = [](GridModule* m, const std::string& pfx) {
+                m->param_ports = {{pfx + "/cutoff", 2}, {pfx + "/resonance", 3}};
+            };
+            // Effects: n_fx_params params at ports 2..2+n_fx_params-1.
+            const auto effect_setup = [](GridModule* m, const std::string& pfx) {
+                m->param_ports.clear();
+                for (int i = 0; i < n_fx_params; ++i)
+                    m->param_ports.push_back({pfx + "/p" + std::to_string(i), 2 + i});
+            };
+            // Oscillators: n_osc_params params at ports 1..1+n_osc_params-1.
+            const auto osc_setup = [](GridModule* m, const std::string& pfx) {
+                m->param_ports.clear();
+                for (int i = 0; i < n_osc_params; ++i)
+                    m->param_ports.push_back({pfx + "/p" + std::to_string(i), 1 + i});
+            };
+
+            // Surge sst-filters
+            r["ladder"]  = {[]() -> std::unique_ptr<GridModule> {
+                               return std::make_unique<surge::VintageLadderModule>();
+                           },
+                            filter_setup, nullptr, nullptr};
+            r["diode"]   = {[]() -> std::unique_ptr<GridModule> {
+                              return std::make_unique<surge::DiodeLadderModule>();
+                          },
+                            filter_setup, nullptr, nullptr};
+            r["k35-lp"]  = {[]() -> std::unique_ptr<GridModule> {
+                               return std::make_unique<surge::K35LPModule>();
+                           },
+                            filter_setup, nullptr, nullptr};
+            r["k35-hp"]  = {[]() -> std::unique_ptr<GridModule> {
+                               return std::make_unique<surge::K35HPModule>();
+                           },
+                            filter_setup, nullptr, nullptr};
+            r["obxd-4p"] = {[]() -> std::unique_ptr<GridModule> {
+                                return std::make_unique<surge::OBXD4PoleModule>();
+                            },
+                            filter_setup, nullptr, nullptr};
+            r["lp12"]    = {[]() -> std::unique_ptr<GridModule> {
+                             return std::make_unique<surge::LP12Module>();
+                         },
+                            filter_setup, nullptr, nullptr};
+            r["lp24"]    = {[]() -> std::unique_ptr<GridModule> {
+                             return std::make_unique<surge::LP24Module>();
+                         },
+                            filter_setup, nullptr, nullptr};
+            r["hp12"]    = {[]() -> std::unique_ptr<GridModule> {
+                             return std::make_unique<surge::HP12Module>();
+                         },
+                            filter_setup, nullptr, nullptr};
+            r["hp24"]    = {[]() -> std::unique_ptr<GridModule> {
+                             return std::make_unique<surge::HP24Module>();
+                         },
+                            filter_setup, nullptr, nullptr};
+            r["bp12"]    = {[]() -> std::unique_ptr<GridModule> {
+                             return std::make_unique<surge::BP12Module>();
+                         },
+                            filter_setup, nullptr, nullptr};
+            r["bp24"]    = {[]() -> std::unique_ptr<GridModule> {
+                             return std::make_unique<surge::BP24Module>();
+                         },
+                            filter_setup, nullptr, nullptr};
+
+            // Surge effects
+            r["reverb1"]    = {[]() -> std::unique_ptr<GridModule> {
+                                return std::make_unique<surge::Reverb1Module>();
+                            },
+                               effect_setup, nullptr, nullptr};
+            r["reverb2"]    = {[]() -> std::unique_ptr<GridModule> {
+                                return std::make_unique<surge::Reverb2Module>();
+                            },
+                               effect_setup, nullptr, nullptr};
+            r["chorus"]     = {[]() -> std::unique_ptr<GridModule> {
+                               return std::make_unique<surge::ChorusModule>();
+                           },
+                               effect_setup, nullptr, nullptr};
+            r["delay"]      = {[]() -> std::unique_ptr<GridModule> {
+                              return std::make_unique<surge::DelayModule>();
+                          },
+                               effect_setup, nullptr, nullptr};
+            r["phaser"]     = {[]() -> std::unique_ptr<GridModule> {
+                               return std::make_unique<surge::PhaserModule>();
+                           },
+                               effect_setup, nullptr, nullptr};
+            r["flanger"]    = {[]() -> std::unique_ptr<GridModule> {
+                                return std::make_unique<surge::FlangerModule>();
+                            },
+                               effect_setup, nullptr, nullptr};
+            r["bonsai"]     = {[]() -> std::unique_ptr<GridModule> {
+                               return std::make_unique<surge::BonsaiModule>();
+                           },
+                               effect_setup, nullptr, nullptr};
+            r["ensemble"]   = {[]() -> std::unique_ptr<GridModule> {
+                                 return std::make_unique<surge::EnsembleModule>();
+                             },
+                               effect_setup, nullptr, nullptr};
+            r["distortion"] = {[]() -> std::unique_ptr<GridModule> {
+                                   return std::make_unique<surge::DistortionModule>();
+                               },
+                               effect_setup, nullptr, nullptr};
+
+            // Surge oscillators
+            r["classic"]  = {[]() -> std::unique_ptr<GridModule> {
+                                return std::make_unique<surge::ClassicOscModule>();
+                            },
+                             osc_setup, nullptr, nullptr};
+            r["sine-osc"] = {[]() -> std::unique_ptr<GridModule> {
+                                 return std::make_unique<surge::SineOscModule>();
+                             },
+                             osc_setup, nullptr, nullptr};
+            r["modern"]   = {[]() -> std::unique_ptr<GridModule> {
+                               return std::make_unique<surge::ModernOscModule>();
+                           },
+                             osc_setup, nullptr, nullptr};
+            r["fm2"]      = {[]() -> std::unique_ptr<GridModule> {
+                            return std::make_unique<surge::FM2OscModule>();
+                        },
+                             osc_setup, nullptr, nullptr};
+            r["fm3"]      = {[]() -> std::unique_ptr<GridModule> {
+                            return std::make_unique<surge::FM3OscModule>();
+                        },
+                             osc_setup, nullptr, nullptr};
+            r["string"]   = {[]() -> std::unique_ptr<GridModule> {
+                               return std::make_unique<surge::StringOscModule>();
+                           },
+                             osc_setup, nullptr, nullptr};
+            r["twist"]    = {[]() -> std::unique_ptr<GridModule> {
+                              return std::make_unique<surge::TwistOscModule>();
+                          },
+                             osc_setup, nullptr, nullptr};
+
+            // Surge modulators — param_ports and taps declared in constructor; no setup lambda.
+            r["adsr"] = {[]() -> std::unique_ptr<GridModule> {
+                             return std::make_unique<surge::ADSRModule>();
+                         },
+                         nullptr, nullptr, nullptr};
+            r["lfo"]  = {[]() -> std::unique_ptr<GridModule> {
+                            return std::make_unique<surge::SimpleLFOModule>();
+                        },
+                         nullptr, nullptr, nullptr};
+        }
 #endif
 #if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
         r["wasm"] = {nullptr, // make (unused — wasm uses make_with_args)

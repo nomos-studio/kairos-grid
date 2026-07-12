@@ -170,6 +170,54 @@ if(TARGET kairos_grid::wasm)
     catch_discover_tests(kairos-grid-wasm-tests)
 endif()
 
+# M7g registry integration tests — exercises newly registered module types through
+# the full EDN patch-bus → param-bus roundtrip.  Each test section is individually
+# guarded by KAIROS_GRID_PLUGIN_HAS_MI / KAIROS_GRID_PLUGIN_HAS_SURGE so only
+# what is actually linked in gets compiled.
+#
+# Requires at minimum: clap + kairos_grid::mi (plugin-mi preset).
+# Surge registry tests activate when kairos_grid::surge-modules is also present
+# (future plugin-mi-surge preset — currently blocked by CLAP target collision
+# between clap-juce-extensions and the plugin preset's FetchContent clap target).
+if(TARGET clap AND TARGET kairos_grid::mi)
+    set(_m7g_test_sources
+        test_m7g_registry.cpp
+        ../src/clap_plugin.cpp
+    )
+    set(_m7g_test_libs
+        kairos_grid::engine
+        kairos_grid::mi
+        clap
+        Catch2::Catch2WithMain
+        sanitizers::sanitizers
+    )
+    set(_m7g_test_defs
+        KAIROS_GRID_PLUGIN_HAS_MI=1
+    )
+
+    if(TARGET kairos_grid::surge-modules)
+        list(APPEND _m7g_test_libs kairos_grid::surge-modules)
+        list(APPEND _m7g_test_defs KAIROS_GRID_PLUGIN_HAS_SURGE=1)
+    endif()
+
+    if(TARGET kairos_grid::wasm)
+        list(APPEND _m7g_test_libs kairos_grid::wasm)
+        list(APPEND _m7g_test_defs KAIROS_GRID_PLUGIN_HAS_WASM=1)
+    endif()
+
+    add_executable(kairos-grid-m7g-registry-tests ${_m7g_test_sources})
+    target_link_libraries(kairos-grid-m7g-registry-tests PRIVATE ${_m7g_test_libs})
+    target_compile_definitions(kairos-grid-m7g-registry-tests PRIVATE ${_m7g_test_defs})
+
+    set_target_properties(kairos-grid-m7g-registry-tests PROPERTIES
+        CXX_STANDARD          20
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS        OFF
+    )
+
+    catch_discover_tests(kairos-grid-m7g-registry-tests)
+endif()
+
 # MI DSP tests — only built when kairos_grid::mi is available.
 if(TARGET kairos_grid::mi)
     add_executable(kairos-grid-mi-tests

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Tests for MI DSP module wrappers: SvfModule, OnePoleModule, PlaitsModule.
+// Tests for MI DSP module wrappers: SvfModule, OnePoleModule, PlaitsModule, LpgModule.
 
 #include <kairos_grid/grid_engine.hpp>
 #include <kairos_grid/grid_graph.hpp>
+#include <kairos_grid/mi/lpg_module.hpp>
 #include <kairos_grid/mi/one_pole_module.hpp>
 #include <kairos_grid/mi/plaits_module.hpp>
 #include <kairos_grid/mi/svf_module.hpp>
@@ -259,4 +260,136 @@ TEST_CASE("PlaitsModule: integrates into GridGraph chain with SvfModule") {
     res->step_block(4800);
 
     REQUIRE(std::isfinite(s->outputs[0].voltage)); // SVF LP output
+}
+
+// ---------------------------------------------------------------------------
+// LpgModule
+// ---------------------------------------------------------------------------
+
+TEST_CASE("LpgModule: constructs with 5 inputs and 2 outputs") {
+    LpgModule m_clean(false);
+    REQUIRE(m_clean.inputs.size() == 5);
+    REQUIRE(m_clean.outputs.size() == 2);
+
+    LpgModule m_vactrol(true);
+    REQUIRE(m_vactrol.inputs.size() == 5);
+    REQUIRE(m_vactrol.outputs.size() == 2);
+}
+
+TEST_CASE("LpgModule: cv=0 gives zero output") {
+    auto  mod_ptr = std::make_unique<LpgModule>(false);
+    auto* mod     = mod_ptr.get();
+
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[0].voltage = 1.f; // L in = 1 V DC
+    mod->inputs[2].voltage = 0.f; // cv = 0
+
+    res->step_block(1);
+
+    // gain = vactrol = cv = 0 → output must be zero
+    REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(0.f, 1e-6f));
+    REQUIRE_THAT(mod->outputs[1].voltage, Catch::Matchers::WithinAbs(0.f, 1e-6f));
+}
+
+TEST_CASE("LpgModule: cv=1 character=0 (pure VCA) passes DC through") {
+    auto  mod_ptr = std::make_unique<LpgModule>(false);
+    auto* mod     = mod_ptr.get();
+
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[0].voltage = 1.f; // L in = 1 V DC
+    mod->inputs[2].voltage = 1.f; // cv = 1
+    mod->inputs[4].voltage = 0.f; // character = 0 (pure VCA, filter open)
+
+    // Settle the filter state (OnePole at 18 kHz settles in a handful of samples).
+    res->step_block(100);
+
+    // output should be close to 1.0: gain = 1, LP at 18 kHz passes DC
+    REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(1.f, 0.01f));
+}
+
+TEST_CASE("LpgModule: cv=1 character=1 (LP mode) passes DC through when fully open") {
+    auto  mod_ptr = std::make_unique<LpgModule>(false);
+    auto* mod     = mod_ptr.get();
+
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[0].voltage = 1.f; // L in = 1 V DC
+    mod->inputs[2].voltage = 1.f; // cv = 1
+    mod->inputs[4].voltage = 1.f; // character = 1 (full LP+VCA)
+
+    // With cv=1 the cutoff is at f_hi (18 kHz) and gain=1, so DC passes.
+    res->step_block(200);
+
+    REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(1.f, 0.01f));
+}
+
+TEST_CASE("LpgModule: vactrol mode has slower cv-to-zero response than clean mode") {
+    // Both modules start with cv=1 driven long enough to settle.
+    // Then cv drops to 0.  After a single sample:
+    //   clean:   vactrol_ = 0 immediately → output = 0
+    //   vactrol: vactrol_ barely moves (alpha_attack ≈ sample_time / 5ms ≈ 4e-3) →
+    //            output still > 0.9
+
+    const float k_sr = 48000.f;
+
+    // --- Clean LPG ---
+    {
+        auto  mod_ptr = std::make_unique<LpgModule>(false);
+        auto* mod     = mod_ptr.get();
+
+        GridGraph g;
+        g.add_module(std::move(mod_ptr));
+        auto res = g.build();
+        REQUIRE(res.has_value());
+        res->prepare(k_sr);
+
+        mod->inputs[0].voltage = 1.f;
+        mod->inputs[2].voltage = 1.f;
+        mod->inputs[4].voltage = 0.f; // pure VCA for simplicity
+
+        res->step_block(4800);        // 100 ms to settle
+        mod->inputs[2].voltage = 0.f; // drop cv
+        res->step_block(1);
+
+        // Clean: gain drops to 0 immediately
+        REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(0.f, 1e-5f));
+    }
+
+    // --- Vactrol LPG ---
+    {
+        auto  mod_ptr = std::make_unique<LpgModule>(true);
+        auto* mod     = mod_ptr.get();
+
+        GridGraph g;
+        g.add_module(std::move(mod_ptr));
+        auto res = g.build();
+        REQUIRE(res.has_value());
+        res->prepare(k_sr);
+
+        mod->inputs[0].voltage = 1.f;
+        mod->inputs[2].voltage = 1.f;
+        mod->inputs[3].voltage = 0.f; // minimum decay (50ms base * spread)
+        mod->inputs[4].voltage = 0.f; // pure VCA
+
+        res->step_block(4800);        // 100 ms to charge vactrol
+        mod->inputs[2].voltage = 0.f; // drop cv
+        res->step_block(1);
+
+        // Vactrol: release is slow — output should still be > 0.9 after 1 sample
+        REQUIRE(mod->outputs[0].voltage > 0.9f);
+    }
 }

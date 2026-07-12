@@ -6,8 +6,9 @@
 # from github.com/surge-synthesizer/surge-rack, adapted for FetchContent use.
 #
 # Set EURORACK_SRC_DIR to the root of a pre-cloned surge-synthesizer/eurorack
-# checkout (the directory that contains the nested eurorack/ source tree) to
-# avoid a network fetch.  If unset, FetchContent downloads commit f761446.
+# checkout (the directory containing plaits/ and stmlib/ directly — no nested
+# eurorack/ subdirectory) to avoid a network fetch.  If unset, FetchContent
+# downloads commit f761446.
 #
 # The resulting target is kairos_grid::eurorack.
 
@@ -27,8 +28,9 @@ else()
     set(_er_root "${eurorack_src_SOURCE_DIR}")
 endif()
 
-# Source paths relative to _er_root/eurorack/
-set(_er_src "${_er_root}/eurorack")
+# Source paths relative to _er_root/ (plaits/ and stmlib/ live at root in
+# surge-synthesizer/eurorack — there is no nested eurorack/ subdirectory).
+set(_er_src "${_er_root}")
 
 add_library(kairos-eurorack STATIC
     # Plaits voice + all synthesis engines
@@ -90,7 +92,7 @@ endif()
 
 target_include_directories(kairos-eurorack
     PUBLIC
-        # Headers are at <_er_root>/eurorack/stmlib/... and .../plaits/...
+        # Headers are at <_er_root>/stmlib/... and .../plaits/...
         # Include root is _er_src (the directory containing stmlib/ and plaits/).
         ${_er_src}
         # Platform shim (force-included on MSVC; harmless to have on path).
