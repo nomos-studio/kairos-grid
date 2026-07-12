@@ -199,6 +199,63 @@ TEST_CASE("m7g registry: lpg-vactrol — push_patch succeeds and exposes cv, dec
     p->destroy(p);
 }
 
+TEST_CASE("m7g registry: ws-hard — push_patch succeeds and exposes drive param") {
+    static constexpr const char* k_edn = "{:modules [{:type \"env\"} {:type \"audio-in\"}"
+                                         "           {:type \"ws-hard\"} {:type \"audio-out\"}]"
+                                         " :cables [[1 0 2 0] [1 1 2 1] [2 0 3 0] [2 1 3 1]]}";
+
+    auto        host = make_stub_host();
+    const auto* p    = create_plugin(&host);
+    REQUIRE(p->init(p));
+    REQUIRE(p->activate(p, 48000.0, 1, 512));
+    REQUIRE(p->start_processing(p));
+
+    const auto* pb =
+        static_cast<const clap_plugin_patch_bus_t*>(p->get_extension(p, CLAP_EXT_KAIROS_PATCH_BUS));
+    const auto* param =
+        static_cast<const clap_plugin_param_bus_t*>(p->get_extension(p, CLAP_EXT_KAIROS_PARAM_BUS));
+
+    const auto names = push_and_get_schema(p, pb, param, k_edn);
+    REQUIRE_FALSE(names.empty());
+    CHECK(names.count("ws-hard/drive") == 1);
+
+    p->stop_processing(p);
+    p->deactivate(p);
+    p->destroy(p);
+}
+
+TEST_CASE("m7g registry: all waveshaper types — push_patch returns true") {
+    static constexpr const char* k_types[] = {"ws-hard", "ws-tanh", "ws-soft", "ws-fold"};
+
+    for (const auto* type : k_types) {
+        const std::string edn = std::string("{:modules [{:type \"env\"} {:type \"audio-in\"}"
+                                            "           {:type \"") +
+                                type +
+                                "\"} {:type \"audio-out\"}]"
+                                " :cables [[1 0 2 0] [1 1 2 1] [2 0 3 0] [2 1 3 1]]}";
+
+        auto        host = make_stub_host();
+        const auto* p    = create_plugin(&host);
+        REQUIRE(p->init(p));
+        REQUIRE(p->activate(p, 48000.0, 1, 512));
+        REQUIRE(p->start_processing(p));
+
+        const auto* pb = static_cast<const clap_plugin_patch_bus_t*>(
+            p->get_extension(p, CLAP_EXT_KAIROS_PATCH_BUS));
+
+        const auto len = static_cast<uint32_t>(edn.size());
+        INFO("waveshaper type: " << type);
+        REQUIRE(pb->push_patch(p, edn.c_str(), len) == true);
+
+        SilentProcess sp;
+        REQUIRE(p->process(p, &sp.proc) != CLAP_PROCESS_ERROR);
+
+        p->stop_processing(p);
+        p->deactivate(p);
+        p->destroy(p);
+    }
+}
+
 TEST_CASE("m7g registry: one-pole — push_patch succeeds and exposes freq param") {
     // env(0) + audio-in(1) + one-pole(2) + audio-out(3)
     // Audio-in L → one-pole in; one-pole lp → out L; one-pole hp → out R

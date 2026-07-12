@@ -222,6 +222,7 @@ endif()
 if(TARGET kairos_grid::mi)
     add_executable(kairos-grid-mi-tests
         test_mi_modules.cpp
+        test_waveshaper_module.cpp
     )
 
     target_link_libraries(kairos-grid-mi-tests

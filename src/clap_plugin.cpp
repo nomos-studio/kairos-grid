@@ -20,6 +20,7 @@
 #include <kairos_grid/mi/one_pole_module.hpp>
 #include <kairos_grid/mi/plaits_module.hpp>
 #include <kairos_grid/mi/svf_module.hpp>
+#include <kairos_grid/mi/waveshaper_module.hpp>
 #endif
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_SURGE)
@@ -140,6 +141,36 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
             [](GridModule* m, const std::string& pfx) {
                 m->param_ports = {{pfx + "/cv", 2}, {pfx + "/decay", 3}, {pfx + "/character", 4}};
             },
+            nullptr, nullptr};
+        // Scalar ADAA waveshapers — four shapes, no oversampling.
+        // Inputs: in-l(0), in-r(1), drive(2, 0=unity, 1=16×).
+        r["ws-hard"] = {
+            []() -> std::unique_ptr<GridModule> {
+                return std::make_unique<mi::WaveshaperModule>(&mi::WaveshaperModule::f_hard,
+                                                              &mi::WaveshaperModule::F_hard);
+            },
+            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
+            nullptr, nullptr};
+        r["ws-tanh"] = {
+            []() -> std::unique_ptr<GridModule> {
+                return std::make_unique<mi::WaveshaperModule>(&mi::WaveshaperModule::f_tanh,
+                                                              &mi::WaveshaperModule::F_tanh);
+            },
+            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
+            nullptr, nullptr};
+        r["ws-soft"] = {
+            []() -> std::unique_ptr<GridModule> {
+                return std::make_unique<mi::WaveshaperModule>(&mi::WaveshaperModule::f_soft,
+                                                              &mi::WaveshaperModule::F_soft);
+            },
+            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
+            nullptr, nullptr};
+        r["ws-fold"] = {
+            []() -> std::unique_ptr<GridModule> {
+                return std::make_unique<mi::WaveshaperModule>(&mi::WaveshaperModule::f_fold,
+                                                              &mi::WaveshaperModule::F_fold);
+            },
+            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
             nullptr, nullptr};
 #endif
 #if defined(KAIROS_GRID_PLUGIN_HAS_SURGE)
