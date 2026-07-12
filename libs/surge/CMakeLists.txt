@@ -62,8 +62,20 @@ target_compile_options(juce_dsp_rack_sub PRIVATE
     $<$<CXX_COMPILER_ID:GNU>:-Wno-dangling-pointer>
     -DJUCE_AUDIOWORKGROUP_TYPES_AVAILABLE=0)
 
+# juce_gui_basics pulls in CGWindowListCreateImage (deprecated on macOS 14,
+# unavailable on macOS 15).  The surge preset pins CMAKE_OSX_DEPLOYMENT_TARGET
+# to 14.0 so the API appears as deprecated rather than absent; suppress the
+# resulting deprecation warning so the build stays clean.
+if(APPLE AND TARGET juce_gui_basics)
+    target_compile_options(juce_gui_basics PRIVATE -Wno-deprecated-declarations)
+endif()
+
 target_compile_options(fmt PRIVATE
     $<$<CXX_COMPILER_ID:GNU>:-Wno-dangling-reference>)
+# fmt/format.h uses a space before the literal-operator suffix (_a); clang 16+
+# warns on this with -Wdeprecated-literal-operator.  PUBLIC propagates the
+# suppression to both fmt's own TUs and every TU that #includes fmt headers.
+target_compile_options(fmt PUBLIC -Wno-deprecated-literal-operator)
 
 target_compile_options(eurorack PRIVATE
     -Wno-unused-local-typedefs
@@ -108,7 +120,8 @@ target_compile_options(surge-common PRIVATE
     $<$<PLATFORM_ID:Darwin>:-Wno-unused-lambda-capture>
     $<$<PLATFORM_ID:Darwin>:-Wno-mismatched-tags>
     $<$<PLATFORM_ID:Darwin>:-Wno-unused-but-set-variable>
-    $<$<PLATFORM_ID:Darwin>:-Wno-infinite-recursion>)
+    $<$<PLATFORM_ID:Darwin>:-Wno-infinite-recursion>
+    $<$<PLATFORM_ID:Darwin>:-Wno-nontrivial-memcall>)
 
 # ---------------------------------------------------------------------------
 # kairos_grid::surge — INTERFACE aggregate target.

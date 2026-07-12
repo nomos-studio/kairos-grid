@@ -99,6 +99,25 @@ if(TARGET kairos_grid::surge-modules)
     )
 
     catch_discover_tests(kairos-grid-surge-modulator-tests)
+
+    add_executable(kairos-grid-surge-waveshaper-tests
+        test_surge_waveshaper_module.cpp
+    )
+
+    target_link_libraries(kairos-grid-surge-waveshaper-tests
+        PRIVATE
+            kairos_grid::surge-modules
+            Catch2::Catch2WithMain
+            sanitizers::sanitizers
+    )
+
+    set_target_properties(kairos-grid-surge-waveshaper-tests PROPERTIES
+        CXX_STANDARD          20
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS        OFF
+    )
+
+    catch_discover_tests(kairos-grid-surge-waveshaper-tests)
 endif()
 
 # CLAP plugin tests — only built when the clap target is available (plugin preset).

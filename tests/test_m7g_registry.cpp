@@ -582,4 +582,69 @@ TEST_CASE("m7g registry: plaits -> ladder -> reverb2 chain builds and processes"
 
 #endif // KAIROS_GRID_PLUGIN_HAS_MI (showcase)
 
+// ---------------------------------------------------------------------------
+// sst-waveshaper registry tests
+// ---------------------------------------------------------------------------
+
+TEST_CASE("m7g registry: sst-soft — push_patch succeeds and exposes drive param") {
+    static constexpr const char* k_edn = "{:modules [{:type \"env\"} {:type \"audio-in\"}"
+                                         "           {:type \"sst-soft\"} {:type \"audio-out\"}]"
+                                         " :cables [[1 0 2 0] [1 1 2 1] [2 0 3 0] [2 1 3 1]]}";
+
+    auto        host = make_stub_host();
+    const auto* p    = create_plugin(&host);
+    REQUIRE(p->init(p));
+    REQUIRE(p->activate(p, 48000.0, 1, 512));
+    REQUIRE(p->start_processing(p));
+
+    const auto* pb =
+        static_cast<const clap_plugin_patch_bus_t*>(p->get_extension(p, CLAP_EXT_KAIROS_PATCH_BUS));
+    const auto* param =
+        static_cast<const clap_plugin_param_bus_t*>(p->get_extension(p, CLAP_EXT_KAIROS_PARAM_BUS));
+
+    const auto names = push_and_get_schema(p, pb, param, k_edn);
+    REQUIRE_FALSE(names.empty());
+    CHECK(names.count("sst-soft/drive") == 1);
+
+    p->stop_processing(p);
+    p->deactivate(p);
+    p->destroy(p);
+}
+
+TEST_CASE("m7g registry: all sst-waveshaper types — push_patch returns true") {
+    static constexpr const char* k_types[] = {
+        "sst-soft",     "sst-hard",     "sst-asym",       "sst-medium",
+        "sst-ojd",      "sst-fuzz",     "sst-fuzz-heavy", "sst-westfold",
+        "sst-dualfold", "sst-softfold", "sst-harmonic2",  "sst-harmonic3",
+    };
+
+    for (const auto* type : k_types) {
+        const std::string edn = std::string("{:modules [{:type \"env\"} {:type \"audio-in\"}"
+                                            "           {:type \"") +
+                                type +
+                                "\"} {:type \"audio-out\"}]"
+                                " :cables [[1 0 2 0] [1 1 2 1] [2 0 3 0] [2 1 3 1]]}";
+
+        auto        host = make_stub_host();
+        const auto* p    = create_plugin(&host);
+        REQUIRE(p->init(p));
+        REQUIRE(p->activate(p, 48000.0, 1, 512));
+        REQUIRE(p->start_processing(p));
+
+        const auto* pb = static_cast<const clap_plugin_patch_bus_t*>(
+            p->get_extension(p, CLAP_EXT_KAIROS_PATCH_BUS));
+
+        const auto len = static_cast<uint32_t>(edn.size());
+        INFO("sst-waveshaper type: " << type);
+        REQUIRE(pb->push_patch(p, edn.c_str(), len) == true);
+
+        SilentProcess sp;
+        REQUIRE(p->process(p, &sp.proc) != CLAP_PROCESS_ERROR);
+
+        p->stop_processing(p);
+        p->deactivate(p);
+        p->destroy(p);
+    }
+}
+
 #endif // KAIROS_GRID_PLUGIN_HAS_SURGE

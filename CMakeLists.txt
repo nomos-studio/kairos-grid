@@ -96,13 +96,18 @@ endif()
 endif() # KAIROS_GRID_BUILD_ENGINE
 
 # ---------------------------------------------------------------------------
-# CLAP SDK — declared here, before MI and Surge, so that Surge's
-# clap-juce-extensions dependency sees an already-populated FetchContent
-# entry and skips its own fetch.  The `clap` INTERFACE target is created
-# exactly once; the PLUGIN block below just uses it.
+# CLAP SDK — only fetched when building the CLAP plugin.
+#
+# NOTE: Surge bundles clap-juce-extensions which includes a copy of the CLAP
+# headers and adds them via direct add_subdirectory (not FetchContent).
+# Pre-declaring clap here would create a `clap` target BEFORE Surge's
+# clap-juce-extensions runs, causing a duplicate-target CMake error.
+# Surge tests don't link against the CLAP SDK directly — they only need
+# kairos_grid::surge-modules and the engine — so we restrict this block to
+# the plugin build only.
 # ---------------------------------------------------------------------------
 
-if(KAIROS_GRID_BUILD_PLUGIN OR KAIROS_GRID_BUILD_SURGE)
+if(KAIROS_GRID_BUILD_PLUGIN)
     if(DEFINED CLAP_SRC_DIR)
         FetchContent_Declare(clap SOURCE_DIR "${CLAP_SRC_DIR}")
     else()

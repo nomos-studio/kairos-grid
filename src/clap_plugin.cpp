@@ -28,6 +28,7 @@
 #include <kairos_grid/surge/surge_filter_module.hpp>
 #include <kairos_grid/surge/surge_modulator_modules.hpp>
 #include <kairos_grid/surge/surge_osc_module.hpp>
+#include <kairos_grid/surge/surge_waveshaper_module.hpp>
 #endif
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
@@ -325,6 +326,39 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
                             return std::make_unique<surge::SimpleLFOModule>();
                         },
                          nullptr, nullptr, nullptr};
+
+            // sst-waveshapers — curated palette bridged via 4-sample SIMD buffer.
+            // All share the same port layout as WaveshaperModule: in-l(0), in-r(1),
+            // drive(2, 0=unity, 1=16×).  4-sample latency (~0.08 ms at 48 kHz).
+            using WS     = sst::waveshapers::WaveshaperType;
+            auto ws_make = [](WS t) {
+                return [t]() -> std::unique_ptr<GridModule> {
+                    return std::make_unique<surge::SurgeWaveshaperModule>(t);
+                };
+            };
+            auto ws_setup = [](GridModule* m, const std::string& pfx) {
+                m->param_ports = {{pfx + "/drive", 2}};
+            };
+
+            // Saturators
+            r["sst-soft"]   = {ws_make(WS::wst_soft), ws_setup, nullptr, nullptr};
+            r["sst-hard"]   = {ws_make(WS::wst_hard), ws_setup, nullptr, nullptr};
+            r["sst-asym"]   = {ws_make(WS::wst_asym), ws_setup, nullptr, nullptr};
+            r["sst-medium"] = {ws_make(WS::wst_zamsat), ws_setup, nullptr, nullptr};
+            r["sst-ojd"]    = {ws_make(WS::wst_ojd), ws_setup, nullptr, nullptr};
+
+            // Fuzz
+            r["sst-fuzz"]       = {ws_make(WS::wst_fuzz), ws_setup, nullptr, nullptr};
+            r["sst-fuzz-heavy"] = {ws_make(WS::wst_fuzzheavy), ws_setup, nullptr, nullptr};
+
+            // Wavefolders
+            r["sst-westfold"] = {ws_make(WS::wst_westfold), ws_setup, nullptr, nullptr};
+            r["sst-dualfold"] = {ws_make(WS::wst_dualfold), ws_setup, nullptr, nullptr};
+            r["sst-softfold"] = {ws_make(WS::wst_softfold), ws_setup, nullptr, nullptr};
+
+            // Harmonic shapers (Chebyshev — add specific harmonic content)
+            r["sst-harmonic2"] = {ws_make(WS::wst_cheby2), ws_setup, nullptr, nullptr};
+            r["sst-harmonic3"] = {ws_make(WS::wst_cheby3), ws_setup, nullptr, nullptr};
         }
 #endif
 #if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
