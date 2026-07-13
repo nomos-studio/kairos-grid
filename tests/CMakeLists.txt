@@ -264,6 +264,28 @@ if(TARGET kairos_grid::airwindows-modules)
     catch_discover_tests(kairos-grid-airwindows-tests)
 endif()
 
+# FFT spectral analysis tests — only built when kairos_grid::fft-modules is available.
+if(TARGET kairos_grid::fft-modules)
+    add_executable(kairos-grid-fft-tests
+        test_fft_module.cpp
+    )
+
+    target_link_libraries(kairos-grid-fft-tests
+        PRIVATE
+            kairos_grid::fft-modules
+            Catch2::Catch2WithMain
+            sanitizers::sanitizers
+    )
+
+    set_target_properties(kairos-grid-fft-tests PROPERTIES
+        CXX_STANDARD          20
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS        OFF
+    )
+
+    catch_discover_tests(kairos-grid-fft-tests)
+endif()
+
 # MI DSP tests — only built when kairos_grid::mi is available.
 if(TARGET kairos_grid::mi)
     add_executable(kairos-grid-mi-tests

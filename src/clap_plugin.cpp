@@ -45,6 +45,10 @@
 #include <kairos_grid/wasm_grid_module.hpp>
 #endif
 
+#if defined(KAIROS_GRID_PLUGIN_HAS_FFT)
+#include <kairos_grid/fft/fft_module.hpp>
+#endif
+
 #include <clap/clap.h>
 
 #include <algorithm>
@@ -509,6 +513,22 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
                          for (auto& pp : m->param_ports)
                              pp.name = stem + "/" + pp.name;
                      }};
+#endif
+#if defined(KAIROS_GRID_PLUGIN_HAS_FFT)
+        // Spectral analysis tap — 2 audio inputs, 6 CV descriptor outputs.
+        // Observes audio without altering it; fan-out from same source is free.
+        using kairos_grid::FftModule;
+        r["fft"] = {[]() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(); },
+                    nullptr, nullptr, nullptr};
+        r["fft-512"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(512); },
+            nullptr, nullptr, nullptr};
+        r["fft-2048"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(2048); },
+            nullptr, nullptr, nullptr};
+        r["fft-4096"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(4096); },
+            nullptr, nullptr, nullptr};
 #endif
         return r;
     }();

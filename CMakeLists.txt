@@ -38,6 +38,7 @@ option(KAIROS_GRID_BUILD_MI          "Build MI DSP module wrappers (Plaits, SVF,
 option(KAIROS_GRID_BUILD_SURGE       "Build Surge XT oscillator/filter/effect wrappers"    OFF)
 option(KAIROS_GRID_BUILD_AIRWINDOWS  "Build Airwindows saturation module wrappers"          OFF)
 option(KAIROS_GRID_BUILD_WASM        "Build Faust WASM module support (requires wasmtime)"  OFF)
+option(KAIROS_GRID_BUILD_FFT         "Build FFT spectral analysis modules (KissFFT)"         OFF)
 
 # ---------------------------------------------------------------------------
 # nomos-topology — header-only EDN key constants (nomos::topology).
@@ -261,6 +262,41 @@ if(KAIROS_GRID_BUILD_AIRWINDOWS AND KAIROS_GRID_BUILD_ENGINE)
 endif() # KAIROS_GRID_BUILD_AIRWINDOWS
 
 # ---------------------------------------------------------------------------
+# KissFFT — STFT spectral analysis tap; BSD-3-Clause.
+#
+# Uses FetchContent_Populate (not MakeAvailable) to avoid running KissFFT's own
+# CMakeLists.txt, whose exported target name is ambiguous across versions.
+# Only kiss_fft.c is compiled; kiss_fftr is not needed — real audio samples are
+# fed as complex with zero imaginary parts.
+# ---------------------------------------------------------------------------
+
+if(KAIROS_GRID_BUILD_FFT AND KAIROS_GRID_BUILD_ENGINE)
+
+    FetchContent_Declare(kissfft
+        GIT_REPOSITORY https://github.com/mborgerding/kissfft.git
+        GIT_TAG        131.1.0
+        GIT_SHALLOW    TRUE)
+    FetchContent_GetProperties(kissfft)
+    if(NOT kissfft_POPULATED)
+        FetchContent_Populate(kissfft)
+    endif()
+
+    add_library(kairos-grid-kissfft STATIC ${kissfft_SOURCE_DIR}/kiss_fft.c)
+    target_include_directories(kairos-grid-kissfft PUBLIC ${kissfft_SOURCE_DIR})
+    target_compile_options(kairos-grid-kissfft PRIVATE -w)
+    set_target_properties(kairos-grid-kissfft PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+
+    # INTERFACE convenience target — engine headers + KissFFT.
+    add_library(kairos-grid-fft INTERFACE)
+    add_library(kairos_grid::fft-modules ALIAS kairos-grid-fft)
+    target_link_libraries(kairos-grid-fft INTERFACE
+        kairos_grid::engine
+        kairos-grid-kissfft
+    )
+
+endif() # KAIROS_GRID_BUILD_FFT
+
+# ---------------------------------------------------------------------------
 # CLAP plugin wrapper — adds CLAP SDK dependency.
 # Brings in the engine library transitively.
 # ---------------------------------------------------------------------------
@@ -315,6 +351,13 @@ if(KAIROS_GRID_BUILD_PLUGIN AND KAIROS_GRID_BUILD_ENGINE)
     if(TARGET kairos_grid::wasm)
         target_link_libraries(kairos-grid PRIVATE kairos_grid::wasm)
         target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_WASM=1)
+    endif()
+
+    # Link FFT spectral analysis modules into the plugin when enabled.
+    # clap_plugin.cpp detects availability via KAIROS_GRID_PLUGIN_HAS_FFT.
+    if(TARGET kairos_grid::fft-modules)
+        target_link_libraries(kairos-grid PRIVATE kairos_grid::fft-modules)
+        target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_FFT=1)
     endif()
 
     if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
