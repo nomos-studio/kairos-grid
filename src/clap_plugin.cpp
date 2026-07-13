@@ -9,11 +9,16 @@
 //     atomically at the next process() block boundary.
 
 #include <kairos_grid/audio_modules.hpp>
+#include <kairos_grid/buffer/buffer_module.hpp>
+#include <kairos_grid/buffer/peek_module.hpp>
+#include <kairos_grid/buffer/poke_module.hpp>
+#include <kairos_grid/buffer/sah_module.hpp>
 #include <kairos_grid/clap_kairos_param_bus.h>
 #include <kairos_grid/clap_kairos_patch_bus.h>
 #include <kairos_grid/clap_kairos_tap_bus.h>
 #include <kairos_grid/environment_module.hpp>
 #include <kairos_grid/grid_graph.hpp>
+#include <kairos_grid/shaper/shaper_module.hpp>
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_MI)
 #include <kairos_grid/mi/lpg_module.hpp>
@@ -109,6 +114,112 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
             nullptr, nullptr, nullptr};
         r["audio-out"] = {
             []() -> std::unique_ptr<GridModule> { return std::make_unique<AudioOutputModule>(); },
+            nullptr, nullptr, nullptr};
+        // Shaper primitive — memoryless nonlinearity with CV-modulatable drive, shape, mix.
+        // Three patch-time curves: tanh (soft→hard saturation), fold (sine wavefold),
+        // quantize (bitcrush).  Tanh and Fold use ADAA; Quantize is intentionally raw.
+        // Inputs: in-l(0), in-r(1), drive(2), shape(3), mix(4).
+        {
+            auto shaper_setup = [](GridModule* m, const std::string& pfx) {
+                m->param_ports = {
+                    {pfx + "/drive", 2},
+                    {pfx + "/shape", 3},
+                    {pfx + "/mix", 4},
+                };
+            };
+            r["shaper-tanh"]  = {[]() -> std::unique_ptr<GridModule> {
+                                    return std::make_unique<ShaperModule>(ShaperCurve::Tanh);
+                                },
+                                 shaper_setup, nullptr, nullptr};
+            r["shaper-fold"]  = {[]() -> std::unique_ptr<GridModule> {
+                                    return std::make_unique<ShaperModule>(ShaperCurve::Fold);
+                                },
+                                 shaper_setup, nullptr, nullptr};
+            r["shaper-quant"] = {[]() -> std::unique_ptr<GridModule> {
+                                     return std::make_unique<ShaperModule>(ShaperCurve::Quantize);
+                                 },
+                                 shaper_setup, nullptr, nullptr};
+        }
+        // Peek primitive — CV-indexed buffer read (the read half of the CV-addressable
+        // buffer archetype).  Index input [0,1] maps to buffer positions [0, N-1].
+        // Interpolation kernel is patch-time (registered as distinct types).
+        // Inputs: index-l(0), index-r(1).  Outputs: out-l(0), out-r(1).
+        // Blank-buffer (zeroes) variants: "peek" (linear), "peek-nn" (nearest),
+        //   "peek-cubic" (cubic).
+        // Pre-filled variants: "peek-sine", "peek-tri", "peek-saw" (all linear interp).
+        r["peek"]       = {[]() -> std::unique_ptr<GridModule> {
+                         return std::make_unique<PeekModule>(PeekInterp::Linear);
+                     },
+                           nullptr, nullptr, nullptr};
+        r["peek-nn"]    = {[]() -> std::unique_ptr<GridModule> {
+                            return std::make_unique<PeekModule>(PeekInterp::None);
+                        },
+                           nullptr, nullptr, nullptr};
+        r["peek-cubic"] = {[]() -> std::unique_ptr<GridModule> {
+                               return std::make_unique<PeekModule>(PeekInterp::Cubic);
+                           },
+                           nullptr, nullptr, nullptr};
+        r["peek-sine"]  = {nullptr, nullptr,
+                           [](const std::string&) -> std::unique_ptr<GridModule> {
+                              auto m = std::make_unique<PeekModule>(PeekInterp::Linear);
+                              PeekModule::fill_sine(m->buffer());
+                              return m;
+                          },
+                           nullptr};
+        r["peek-tri"]   = {nullptr, nullptr,
+                           [](const std::string&) -> std::unique_ptr<GridModule> {
+                             auto m = std::make_unique<PeekModule>(PeekInterp::Linear);
+                             PeekModule::fill_triangle(m->buffer());
+                             return m;
+                         },
+                           nullptr};
+        r["peek-saw"]   = {nullptr, nullptr,
+                           [](const std::string&) -> std::unique_ptr<GridModule> {
+                             auto m = std::make_unique<PeekModule>(PeekInterp::Linear);
+                             PeekModule::fill_saw(m->buffer());
+                             return m;
+                         },
+                           nullptr};
+        // SAH — sample-and-hold, dual-use: modulation S&H (rising-edge trig) and
+        // SR reduction (internal periodic counter via rate CV).  Both trigger sources
+        // are active simultaneously; whichever fires first latches.
+        // Inputs: in-l(0), in-r(1), trig(2), rate(3).  Outputs: out-l(0), out-r(1).
+        {
+            auto sah_setup = [](GridModule* m, const std::string& pfx) {
+                m->param_ports = {
+                    {pfx + "/trig", 2},
+                    {pfx + "/rate", 3},
+                };
+            };
+            r["sah"] = {
+                []() -> std::unique_ptr<GridModule> { return std::make_unique<SahModule>(); },
+                sah_setup, nullptr, nullptr};
+        }
+        // Poke primitive — CV-gated buffer write with immediate linear readback.
+        // The write half of the CV-addressable buffer archetype; peek is the read-only
+        // wavetable oscillator half.  Separate write-pos and read-pos allow independent
+        // capture and playback heads.  Write-before-read each block: gated capture shows
+        // up in the same block's output.
+        // Inputs: in-l(0), in-r(1), write-pos(2), read-pos(3), gate(4).
+        // Outputs: out-l(0), out-r(1).
+        {
+            auto poke_setup = [](GridModule* m, const std::string& pfx) {
+                m->param_ports = {
+                    {pfx + "/write-pos", 2},
+                    {pfx + "/read-pos", 3},
+                    {pfx + "/gate", 4},
+                };
+            };
+            r["poke"] = {
+                []() -> std::unique_ptr<GridModule> { return std::make_unique<PokeModule>(); },
+                poke_setup, nullptr, nullptr};
+        }
+        // Buffer primitive — shared named storage, 0 inputs / 0 outputs.
+        // Standalone (no :buf-id in EDN): owns its own buffers, useful for pre-fill.
+        // With :buf-id: the factory injects pre-created shared_ptrs so peek and poke
+        // on the same :buf-id reference the same heap storage.
+        r["buffer"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<BufferModule>(); },
             nullptr, nullptr, nullptr};
 #if defined(KAIROS_GRID_PLUGIN_HAS_MI)
         r["plaits"] = {
@@ -419,6 +530,8 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
 struct ParsedModule {
     std::string type;
     std::string wasm_path;
+    std::string buf_id;  // :buf-id — links buffer/peek/poke to shared storage
+    int         size{0}; // :size   — buffer size; 0 = use default (2048)
 };
 struct ParsedCable {
     int from_mod, from_port, to_mod, to_port;
@@ -473,6 +586,21 @@ namespace {
         return true;
     }
 
+    static int extract_int_field(const std::string& s, const char* edn_key, std::size_t start,
+                                 std::size_t end) {
+        const std::string k = std::string(edn_key) + " ";
+        const std::size_t p = s.find(k, start);
+        if (p == std::string::npos || p >= end)
+            return 0;
+        std::size_t vpos = p + k.size();
+        if (vpos >= end)
+            return 0;
+        int val = 0;
+        if (!scan_int(s, vpos, val) || vpos > end)
+            return 0;
+        return val;
+    }
+
 } // namespace
 
 static ParsedPatch parse_patch_edn(const char* edn_str, uint32_t len) {
@@ -513,7 +641,9 @@ static ParsedPatch parse_patch_edn(const char* edn_str, uint32_t len) {
                 const std::string t = extract_type(s, map_start, pos);
                 if (!t.empty()) {
                     const std::string wp = extract_str_field(s, ":wasm-path", map_start, pos);
-                    result.modules.push_back({t, wp});
+                    const std::string bi = extract_str_field(s, ":buf-id", map_start, pos);
+                    const int         sz = extract_int_field(s, ":size", map_start, pos);
+                    result.modules.push_back({t, wp, bi, sz});
                 }
             } else {
                 ++pos;
@@ -591,12 +721,54 @@ static PatchSlot* build_patch_slot(const ParsedPatch& patch, float sr) {
     AudioInputModule*  audio_in  = nullptr;
     AudioOutputModule* audio_out = nullptr;
 
+    // Pre-pass: materialise shared storage for all :buf-id groups.  The first module
+    // that references a buf_id determines the buffer size; subsequent references inherit
+    // that allocation.  This allows peek and poke on the same :buf-id to share memory
+    // without GridGraph needing to know about named buffers.
+    struct SharedBufs {
+        std::shared_ptr<std::vector<float>> l, r;
+    };
+    std::unordered_map<std::string, SharedBufs> buf_registry;
     for (const auto& pm : patch.modules) {
+        if (!pm.buf_id.empty() && !buf_registry.count(pm.buf_id)) {
+            const std::size_t sz = pm.size > 0 ? static_cast<std::size_t>(pm.size) : 2048u;
+            buf_registry.emplace(pm.buf_id,
+                                 SharedBufs{std::make_shared<std::vector<float>>(sz, 0.f),
+                                            std::make_shared<std::vector<float>>(sz, 0.f)});
+        }
+    }
+
+    for (const auto& pm : patch.modules) {
+        std::unique_ptr<GridModule> mod;
+
+        if (!pm.buf_id.empty()) {
+            // Shared-buffer path: inject pre-created storage into buffer/peek/poke.
+            const auto buf_it = buf_registry.find(pm.buf_id);
+            if (buf_it == buf_registry.end())
+                return nullptr;
+            auto& [l_buf, r_buf] = buf_it->second;
+            if (pm.type == "buffer") {
+                mod = std::make_unique<BufferModule>(l_buf, r_buf);
+            } else if (pm.type == "peek" || pm.type == "peek-nn" || pm.type == "peek-cubic") {
+                const PeekInterp interp = pm.type == "peek-nn"      ? PeekInterp::None
+                                          : pm.type == "peek-cubic" ? PeekInterp::Cubic
+                                                                    : PeekInterp::Linear;
+                mod                     = std::make_unique<PeekModule>(interp, l_buf);
+            } else if (pm.type == "poke") {
+                mod = std::make_unique<PokeModule>(l_buf, r_buf);
+            } else {
+                return nullptr; // :buf-id on unsupported module type
+            }
+            if (!mod)
+                return nullptr;
+            g.add_module(std::move(mod));
+            continue;
+        }
+
         const auto it = reg.find(pm.type);
         if (it == reg.end())
             return nullptr; // unknown type
 
-        std::unique_ptr<GridModule> mod;
         if (it->second.make_with_args)
             mod = it->second.make_with_args(pm.wasm_path);
         else

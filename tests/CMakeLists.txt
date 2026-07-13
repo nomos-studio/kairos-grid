@@ -5,6 +5,11 @@ add_executable(kairos-grid-tests
     test_grid_engine.cpp
     test_environment_module.cpp
     test_audio_modules.cpp
+    test_shaper_module.cpp
+    test_peek_module.cpp
+    test_poke_module.cpp
+    test_sah_module.cpp
+    test_buffer_module.cpp
 )
 
 target_link_libraries(kairos-grid-tests
