@@ -39,6 +39,7 @@ option(KAIROS_GRID_BUILD_SURGE       "Build Surge XT oscillator/filter/effect wr
 option(KAIROS_GRID_BUILD_AIRWINDOWS  "Build Airwindows saturation module wrappers"          OFF)
 option(KAIROS_GRID_BUILD_WASM        "Build Faust WASM module support (requires wasmtime)"  OFF)
 option(KAIROS_GRID_BUILD_FFT         "Build FFT spectral analysis modules (KissFFT)"         OFF)
+option(KAIROS_GRID_BUILD_WDF         "Build WDF circuit model modules (chowdsp_wdf)"          OFF)
 
 # ---------------------------------------------------------------------------
 # nomos-topology — header-only EDN key constants (nomos::topology).
@@ -297,6 +298,30 @@ if(KAIROS_GRID_BUILD_FFT AND KAIROS_GRID_BUILD_ENGINE)
 endif() # KAIROS_GRID_BUILD_FFT
 
 # ---------------------------------------------------------------------------
+# chowdsp_wdf — header-only wave digital filter circuit modeling; MIT license.
+#
+# Uses FetchContent_MakeAvailable: chowdsp_wdf's CMakeLists.txt exports a clean
+# INTERFACE target (chowdsp_wdf) with no ambiguity.  XSIMD is optional and only
+# activates if XSIMD_HPP is already defined — we don't define it, so no SIMD dep.
+# ---------------------------------------------------------------------------
+
+if(KAIROS_GRID_BUILD_WDF AND KAIROS_GRID_BUILD_ENGINE)
+
+    FetchContent_Declare(chowdsp_wdf
+        GIT_REPOSITORY https://github.com/Chowdhury-DSP/chowdsp_wdf.git
+        GIT_TAG        43bcd295e8403de913f9966f4fd7ff9d17c9f1a5)
+    FetchContent_MakeAvailable(chowdsp_wdf)
+
+    add_library(kairos-grid-wdf-modules INTERFACE)
+    add_library(kairos_grid::wdf-modules ALIAS kairos-grid-wdf-modules)
+    target_link_libraries(kairos-grid-wdf-modules INTERFACE
+        kairos_grid::engine
+        chowdsp_wdf
+    )
+
+endif() # KAIROS_GRID_BUILD_WDF
+
+# ---------------------------------------------------------------------------
 # CLAP plugin wrapper — adds CLAP SDK dependency.
 # Brings in the engine library transitively.
 # ---------------------------------------------------------------------------
@@ -358,6 +383,13 @@ if(KAIROS_GRID_BUILD_PLUGIN AND KAIROS_GRID_BUILD_ENGINE)
     if(TARGET kairos_grid::fft-modules)
         target_link_libraries(kairos-grid PRIVATE kairos_grid::fft-modules)
         target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_FFT=1)
+    endif()
+
+    # Link WDF circuit model modules into the plugin when enabled.
+    # clap_plugin.cpp detects availability via KAIROS_GRID_PLUGIN_HAS_WDF.
+    if(TARGET kairos_grid::wdf-modules)
+        target_link_libraries(kairos-grid PRIVATE kairos_grid::wdf-modules)
+        target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_WDF=1)
     endif()
 
     if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)

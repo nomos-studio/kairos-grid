@@ -10,6 +10,7 @@ add_executable(kairos-grid-tests
     test_poke_module.cpp
     test_sah_module.cpp
     test_buffer_module.cpp
+    test_clock_division_module.cpp
 )
 
 target_link_libraries(kairos-grid-tests
@@ -284,6 +285,28 @@ if(TARGET kairos_grid::fft-modules)
     )
 
     catch_discover_tests(kairos-grid-fft-tests)
+endif()
+
+# WDF circuit model tests — only built when kairos_grid::wdf-modules is available.
+if(TARGET kairos_grid::wdf-modules)
+    add_executable(kairos-grid-wdf-tests
+        test_wdf_modules.cpp
+    )
+
+    target_link_libraries(kairos-grid-wdf-tests
+        PRIVATE
+            kairos_grid::wdf-modules
+            Catch2::Catch2WithMain
+            sanitizers::sanitizers
+    )
+
+    set_target_properties(kairos-grid-wdf-tests PROPERTIES
+        CXX_STANDARD          20
+        CXX_STANDARD_REQUIRED ON
+        CXX_EXTENSIONS        OFF
+    )
+
+    catch_discover_tests(kairos-grid-wdf-tests)
 endif()
 
 # MI DSP tests — only built when kairos_grid::mi is available.

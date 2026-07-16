@@ -16,6 +16,7 @@
 #include <kairos_grid/clap_kairos_param_bus.h>
 #include <kairos_grid/clap_kairos_patch_bus.h>
 #include <kairos_grid/clap_kairos_tap_bus.h>
+#include <kairos_grid/clock/clock_division_module.hpp>
 #include <kairos_grid/environment_module.hpp>
 #include <kairos_grid/grid_graph.hpp>
 #include <kairos_grid/shaper/shaper_module.hpp>
@@ -47,6 +48,10 @@
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_FFT)
 #include <kairos_grid/fft/fft_module.hpp>
+#endif
+
+#if defined(KAIROS_GRID_PLUGIN_HAS_WDF)
+#include <kairos_grid/wdf/wdf_modules.hpp>
 #endif
 
 #include <clap/clap.h>
@@ -445,6 +450,18 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
                             return std::make_unique<surge::SimpleLFOModule>();
                         },
                          nullptr, nullptr, nullptr};
+#endif
+            // Beat-clock subdivision gate — derives from EnvironmentModule beat_phase output.
+            // Inputs: beat_phase(0), division(1), pulse_width(2), phase_offset(3).
+            // Output: gate 0.0/1.0.  Param ports: clock/division, clock/pulse_width,
+            // clock/phase_offset.  Tap: signal/gate.
+            // Typical patch: env beat_phase output → clock-div input 0; gate output → trigger
+            // target.
+            r["clock-div"] = {[]() -> std::unique_ptr<GridModule> {
+                                  return std::make_unique<ClockDivisionModule>();
+                              },
+                              nullptr, nullptr, nullptr};
+#if defined(KAIROS_GRID_PLUGIN_HAS_SURGE)
 
             // sst-waveshapers — curated palette bridged via 4-sample SIMD buffer.
             // All share the same port layout as WaveshaperModule: in-l(0), in-r(1),
@@ -528,6 +545,18 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
             nullptr, nullptr, nullptr};
         r["fft-4096"] = {
             []() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(4096); },
+            nullptr, nullptr, nullptr};
+#endif
+#if defined(KAIROS_GRID_PLUGIN_HAS_WDF)
+        // WDF circuit models — physically accurate nonlinear modules.
+        // 2 inputs (audio in, drive), 1 output (audio out).
+        using kairos_grid::DiodeClipModule;
+        using kairos_grid::DiodeHalfModule;
+        r["diode-clip"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<DiodeClipModule>(); },
+            nullptr, nullptr, nullptr};
+        r["diode-half"] = {
+            []() -> std::unique_ptr<GridModule> { return std::make_unique<DiodeHalfModule>(); },
             nullptr, nullptr, nullptr};
 #endif
         return r;
