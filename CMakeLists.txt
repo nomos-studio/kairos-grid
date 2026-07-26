@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: LGPL-2.1-or-later
 cmake_minimum_required(VERSION 3.20)
 
 project(kairos-grid
@@ -200,7 +200,7 @@ endif() # KAIROS_GRID_BUILD_WASM
 
 # ---------------------------------------------------------------------------
 # MI DSP wrappers — Plaits macro-oscillator, stmlib SVF, OnePole.
-# Requires the eurorack static library (GPL-3.0, MIT code within).
+# Requires the eurorack static library (MIT — Emilie Gillet / Mutable Instruments).
 # ---------------------------------------------------------------------------
 
 if(KAIROS_GRID_BUILD_MI AND KAIROS_GRID_BUILD_ENGINE)

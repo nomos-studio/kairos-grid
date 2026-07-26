@@ -1,36 +1,22 @@
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
-# eurorack — MI DSP library (Plaits + stmlib)
+# eurorack — vendored MI DSP library (Plaits + stmlib)
 #
-# This wrapper mirrors the approach in surge/libs/eurorack/CMakeLists.txt
-# from github.com/surge-synthesizer/surge-rack, adapted for FetchContent use.
+# Vendored from surge-synthesizer/eurorack @ f761446.
+# Only the DSP code we use is included (plaits/dsp/, plaits/resources.*,
+# stmlib/algorithms/, stmlib/dsp/, stmlib/fft/, stmlib/utils/).
+# Firmware-only directories (bootloader/, drivers/, system/, midi/, ui/)
+# are excluded.  All vendored code is MIT — Emilie Gillet / Mutable Instruments.
 #
-# Set EURORACK_SRC_DIR to the root of a pre-cloned surge-synthesizer/eurorack
-# checkout (the directory containing plaits/ and stmlib/ directly — no nested
-# eurorack/ subdirectory) to avoid a network fetch.  If unset, FetchContent
-# downloads commit f761446.
-#
-# The resulting target is kairos_grid::eurorack.
+# Vendored to make the kairos-grid LGPL-2.1-or-later license pure:
+# the upstream eurorack repo's LICENSE file references programming/serial
+# (stm32loader, GPL-3) which is unrelated firmware tooling.  By vendoring
+# only the MIT DSP subset we use, there is no GPL-3 code in the tree.
 
 cmake_minimum_required(VERSION 3.20)
 project(kairos-eurorack LANGUAGES CXX)
 
-include(FetchContent)
-
-if(EURORACK_SRC_DIR)
-    message(STATUS "kairos-eurorack: using local eurorack at ${EURORACK_SRC_DIR}")
-    set(_er_root "${EURORACK_SRC_DIR}")
-else()
-    FetchContent_Declare(eurorack_src
-        GIT_REPOSITORY https://github.com/surge-synthesizer/eurorack.git
-        GIT_TAG        f761446)
-    FetchContent_MakeAvailable(eurorack_src)
-    set(_er_root "${eurorack_src_SOURCE_DIR}")
-endif()
-
-# Source paths relative to _er_root/ (plaits/ and stmlib/ live at root in
-# surge-synthesizer/eurorack — there is no nested eurorack/ subdirectory).
-set(_er_src "${_er_root}")
+set(_er_src "${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_library(kairos-eurorack STATIC
     # Plaits voice + all synthesis engines
@@ -74,9 +60,6 @@ target_compile_definitions(kairos-eurorack
         $<$<BOOL:${WIN32}>:_USE_MATH_DEFINES>
 )
 
-# Suppress third-party warnings that are irrelevant or ARM-host-specific.
-# stmlib uses ARM-target inline assembly (ssat/usat) that clang flags on Apple
-# Silicon when compiled for the host ABI; the code still runs correctly.
 target_compile_options(kairos-eurorack PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:
         -Wno-asm-operand-widths
@@ -84,7 +67,6 @@ target_compile_options(kairos-eurorack PRIVATE
     >
 )
 
-# Force-include the MSVC shim only on MSVC; GCC/Clang understand __attribute__.
 if(MSVC)
     target_compile_options(kairos-eurorack PRIVATE
         /FImsvc_gcc_defines.h)
@@ -92,10 +74,7 @@ endif()
 
 target_include_directories(kairos-eurorack
     PUBLIC
-        # Headers are at <_er_root>/stmlib/... and .../plaits/...
-        # Include root is _er_src (the directory containing stmlib/ and plaits/).
         ${_er_src}
-        # Platform shim (force-included on MSVC; harmless to have on path).
         ${CMAKE_CURRENT_SOURCE_DIR}/special_include
 )
 
