@@ -230,6 +230,201 @@ TEST_CASE("WaveshaperModule: triangular fold — steady-state epsilon fallback")
     REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(0.5f, 1e-5f));
 }
 
+// ---------------------------------------------------------------------------
+// stmlib SoftLimit (f_soft_limit / F_soft_limit)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("WaveshaperModule: soft-limit — zero in gives zero out") {
+    auto      mod_ptr = std::make_unique<WaveshaperModule>(&WaveshaperModule::f_soft_limit,
+                                                           &WaveshaperModule::F_soft_limit);
+    auto*     mod     = mod_ptr.get();
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[0].voltage = 0.f;
+    mod->inputs[1].voltage = 0.f;
+    mod->inputs[2].voltage = 0.f;
+    res->step_block(1);
+
+    REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(0.f, 1e-6f));
+    REQUIRE_THAT(mod->outputs[1].voltage, Catch::Matchers::WithinAbs(0.f, 1e-6f));
+}
+
+TEST_CASE("WaveshaperModule: soft-limit — steady-state approximates f(x) at drive=0") {
+    // At steady state x[n]=x[n-1], ADAA falls back to f(x).
+    // SoftLimit(0.5) = 0.5*(27+0.25)/(27+2.25) = 0.5*27.25/29.25 ≈ 0.46581
+    auto      mod_ptr = std::make_unique<WaveshaperModule>(&WaveshaperModule::f_soft_limit,
+                                                           &WaveshaperModule::F_soft_limit);
+    auto*     mod     = mod_ptr.get();
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[0].voltage = 0.5f;
+    mod->inputs[2].voltage = 0.f; // drive=0 → gain=1
+    res->step_block(100);         // settle
+
+    res->step_block(1);
+    const float expected = 0.5f * (27.f + 0.25f) / (27.f + 9.f * 0.25f);
+    REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(expected, 1e-5f));
+}
+
+TEST_CASE("WaveshaperModule: soft-limit — compresses signal (|output| ≤ |input|)") {
+    // SoftLimit always compresses: (27+x²)/(27+9x²) ≤ 1 for all x.
+    auto      mod_ptr = std::make_unique<WaveshaperModule>(&WaveshaperModule::f_soft_limit,
+                                                           &WaveshaperModule::F_soft_limit);
+    auto*     mod     = mod_ptr.get();
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[2].voltage = 0.f;
+    const float xs[]       = {0.1f, 0.5f, 1.f, 2.f, 3.f};
+    for (float v : xs) {
+        mod->inputs[0].voltage = v;
+        res->step_block(100); // settle to steady state
+        res->step_block(1);
+        REQUIRE(mod->outputs[0].voltage <= v + 1e-5f);
+        REQUIRE(mod->outputs[0].voltage >= 0.f);
+    }
+}
+
+TEST_CASE("WaveshaperModule: soft-limit — unbounded at high drive (not clipped to ±1)") {
+    // Unlike SoftClip, SoftLimit grows without bound.  At drive=1 (16× gain),
+    // input 0.5 → x=8; SoftLimit(8) = 8*(27+64)/(27+576) = 8*91/603 ≈ 1.207 > 1.
+    auto      mod_ptr = std::make_unique<WaveshaperModule>(&WaveshaperModule::f_soft_limit,
+                                                           &WaveshaperModule::F_soft_limit);
+    auto*     mod     = mod_ptr.get();
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[0].voltage = 0.5f;
+    mod->inputs[2].voltage = 1.f; // 16× gain → input becomes 8
+    res->step_block(200);         // settle
+    res->step_block(1);
+    REQUIRE(mod->outputs[0].voltage > 1.f); // not bounded ±1
+}
+
+// ---------------------------------------------------------------------------
+// stmlib SoftClip (f_soft_clip / F_soft_clip)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("WaveshaperModule: soft-clip — zero in gives zero out") {
+    auto      mod_ptr = std::make_unique<WaveshaperModule>(&WaveshaperModule::f_soft_clip,
+                                                           &WaveshaperModule::F_soft_clip);
+    auto*     mod     = mod_ptr.get();
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[0].voltage = 0.f;
+    mod->inputs[2].voltage = 0.f;
+    res->step_block(1);
+
+    REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(0.f, 1e-6f));
+}
+
+TEST_CASE("WaveshaperModule: soft-clip — bounded to ±1 at high drive") {
+    // SoftClip clips at ±1 for |x|>3.  At drive=1 (16×), most inputs exceed 3.
+    auto      mod_ptr = std::make_unique<WaveshaperModule>(&WaveshaperModule::f_soft_clip,
+                                                           &WaveshaperModule::F_soft_clip);
+    auto*     mod     = mod_ptr.get();
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[2].voltage = 1.f; // 16× pre-gain
+
+    const float inputs[] = {0.05f, 0.1f, -0.1f, 0.2f, -0.2f, 0.3f, -0.3f};
+    for (float v : inputs) {
+        mod->inputs[0].voltage = v;
+        mod->inputs[1].voltage = -v;
+        res->step_block(1);
+        REQUIRE(std::abs(mod->outputs[0].voltage) <= 1.001f);
+        REQUIRE(std::abs(mod->outputs[1].voltage) <= 1.001f);
+    }
+}
+
+TEST_CASE("WaveshaperModule: soft-clip — steady-state approximates SoftLimit in-range") {
+    // For |x|<3, SoftClip == SoftLimit.  Verify steady-state output at x=0.5.
+    auto      mod_ptr = std::make_unique<WaveshaperModule>(&WaveshaperModule::f_soft_clip,
+                                                           &WaveshaperModule::F_soft_clip);
+    auto*     mod     = mod_ptr.get();
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[0].voltage = 0.5f;
+    mod->inputs[2].voltage = 0.f;
+    res->step_block(100);
+    res->step_block(1);
+
+    const float expected = 0.5f * (27.f + 0.25f) / (27.f + 9.f * 0.25f);
+    REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(expected, 1e-5f));
+}
+
+TEST_CASE("WaveshaperModule: soft-clip — steady-state at x=4 gives ±1") {
+    // x=4 > 3: SoftClip(4) = 1.0 exactly.
+    auto      mod_ptr = std::make_unique<WaveshaperModule>(&WaveshaperModule::f_soft_clip,
+                                                           &WaveshaperModule::F_soft_clip);
+    auto*     mod     = mod_ptr.get();
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[0].voltage = 4.f;
+    mod->inputs[1].voltage = -4.f;
+    mod->inputs[2].voltage = 0.f;
+    res->step_block(100);
+    res->step_block(1);
+
+    REQUIRE_THAT(mod->outputs[0].voltage, Catch::Matchers::WithinAbs(1.f, 1e-5f));
+    REQUIRE_THAT(mod->outputs[1].voltage, Catch::Matchers::WithinAbs(-1.f, 1e-5f));
+}
+
+TEST_CASE("WaveshaperModule: soft-clip — antiderivative continuity across x=3 boundary") {
+    // ADAA from prev=2 to x=4 must use the piecewise F without a discontinuity.
+    // F_soft_clip(4) = 4 + k_sc_C; F_soft_clip(2) = 4/18 + (4/3)*ln(7/3).
+    // Just verify the module runs without NaN and output is in (0, 1].
+    auto      mod_ptr = std::make_unique<WaveshaperModule>(&WaveshaperModule::f_soft_clip,
+                                                           &WaveshaperModule::F_soft_clip);
+    auto*     mod     = mod_ptr.get();
+    GridGraph g;
+    g.add_module(std::move(mod_ptr));
+    auto res = g.build();
+    REQUIRE(res.has_value());
+    res->prepare(48000.f);
+
+    mod->inputs[2].voltage = 0.f;
+    mod->inputs[0].voltage = 2.f;
+    res->step_block(100); // settle prev to 2
+
+    mod->inputs[0].voltage = 4.f; // step across x=3
+    res->step_block(1);
+
+    REQUIRE(std::isfinite(mod->outputs[0].voltage));
+    REQUIRE(mod->outputs[0].voltage > 0.f);
+    REQUIRE(mod->outputs[0].voltage <= 1.001f);
+}
+
 TEST_CASE("WaveshaperModule: triangular fold — antiderivative continuity at fold point") {
     // ADAA(prev, x) = (F(x) − F(prev)) / (x − prev).
     // Cross the fold point at x=1 (segment 0→1 boundary): prev=0.5, x=1.5.

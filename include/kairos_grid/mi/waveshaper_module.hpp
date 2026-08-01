@@ -10,12 +10,14 @@
 // an infinitesimal interval).
 //
 // Registered shapes:
-//   "ws-hard" — hard clip (±1 ceiling, discontinuous derivative at ±1)
-//   "ws-tanh" — tanh soft saturation (smooth, bounded ±1)
-//   "ws-soft" — cubic soft clip ((3x-x³)/2 for |x|≤1, ±1 beyond)
-//   "ws-fold" — sine wavefold (sin(π/2·x), folds every ±2 units of driven input)
-//   "folder"  — triangular wavefold (Buchla/Serge topology); folds every ±2 units with
-//               hard reflections; multi-fold at high drive; output bounded ±1
+//   "ws-hard"          — hard clip (±1 ceiling, discontinuous derivative at ±1)
+//   "ws-tanh"          — tanh soft saturation (smooth, bounded ±1)
+//   "ws-soft"          — cubic soft clip ((3x-x³)/2 for |x|≤1, ±1 beyond)
+//   "ws-fold"          — sine wavefold (sin(π/2·x), folds every ±2 units of driven input)
+//   "folder"           — triangular wavefold (Buchla/Serge topology); folds every ±2 units with
+//                        hard reflections; multi-fold at high drive; output bounded ±1
+//   "stml-soft-limit"  — stmlib SoftLimit: rational saturation, |output|≤|input|, unbounded
+//   "stml-soft-clip"   — stmlib SoftClip: SoftLimit for |x|≤3, hard clip at ±1 beyond
 //
 // Inputs:
 //   0  in-l   — audio left
@@ -119,6 +121,33 @@ class WaveshaperModule : public GridModule {
         return (n & 1) ? 1.0f - q : q;
     }
 
+    // stmlib SoftLimit — rational saturation from stmlib/dsp/dsp.h.
+    // Output compresses toward zero: |f(x)| ≤ |x|; grows as x/9 for large |x| (unbounded).
+    // F'(x) = f(x); derivation: decompose f as x/9 + (8/3)·x/(3+x²) → integrate term-by-term.
+    static float f_soft_limit(float x) { return x * (27.f + x * x) / (27.f + 9.f * x * x); }
+    static float F_soft_limit(float x) {
+        return x * x * (1.f / 18.f) + (4.f / 3.f) * std::log(3.f + x * x);
+    }
+
+    // stmlib SoftClip — SoftLimit for |x|≤3, hard clips to ±1 beyond.
+    // f is C¹ at x=±3 (SoftLimit'(±3)=0); bounded ±1.
+    // F is piecewise: SoftLimit antiderivative in the middle, ±x+C at the tails.
+    // Continuity at ±3 determines C = (8/3)·ln(2)−2.5 ≈ −0.6516.
+    static float f_soft_clip(float x) {
+        if (x < -3.f)
+            return -1.f;
+        if (x > 3.f)
+            return 1.f;
+        return x * (27.f + x * x) / (27.f + 9.f * x * x);
+    }
+    static float F_soft_clip(float x) {
+        if (x <= -3.f)
+            return -x + k_sc_C;
+        if (x >= 3.f)
+            return x + k_sc_C;
+        return x * x * (1.f / 18.f) + (4.f / 3.f) * std::log((3.f + x * x) / 3.f);
+    }
+
   private:
     ShapeFn f_;
     ShapeFn F_;
@@ -136,6 +165,7 @@ class WaveshaperModule : public GridModule {
     static constexpr float k_ln2          = 0.693147181f;  // ln(2)
     static constexpr float k_pi_half      = 1.570796327f;  // π/2
     static constexpr float k_neg2_over_pi = -0.636619772f; // −2/π
+    static constexpr float k_sc_C = -0.651607513f; // (8/3)·ln(2)−2.5; F_soft_clip tail offset
 };
 
 } // namespace kairos_grid::mi

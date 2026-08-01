@@ -35,11 +35,12 @@ option(KAIROS_GRID_BUILD_TESTS  "Build kairos-grid unit tests"       OFF)
 option(KAIROS_GRID_BUILD_ENGINE "Build the sample-rate engine library" ON)
 option(KAIROS_GRID_BUILD_PLUGIN "Build the kairos-grid CLAP plugin"   OFF)
 option(KAIROS_GRID_BUILD_MI          "Build MI DSP module wrappers (Plaits, SVF, OnePole)" OFF)
-option(KAIROS_GRID_BUILD_SURGE       "Build Surge XT oscillator/filter/effect wrappers"    OFF)
 option(KAIROS_GRID_BUILD_AIRWINDOWS  "Build Airwindows saturation module wrappers"          OFF)
 option(KAIROS_GRID_BUILD_WASM        "Build Faust WASM module support (requires wasmtime)"  OFF)
 option(KAIROS_GRID_BUILD_FFT         "Build FFT spectral analysis modules (KissFFT)"         OFF)
 option(KAIROS_GRID_BUILD_WDF         "Build WDF circuit model modules (chowdsp_wdf)"          OFF)
+option(KAIROS_GRID_BUILD_SURGE       "Build Surge XT module .kgext (GPL-3.0)"                  OFF)
+option(KAIROS_GRID_BUILD_TAPE        "Build ChowTape hysteresis .kgext (GPL-3.0)"               OFF)
 
 # ---------------------------------------------------------------------------
 # nomos-topology — header-only EDN key constants (nomos::topology).
@@ -199,18 +200,18 @@ if(KAIROS_GRID_BUILD_WASM AND KAIROS_GRID_BUILD_ENGINE)
 endif() # KAIROS_GRID_BUILD_WASM
 
 # ---------------------------------------------------------------------------
-# MI DSP wrappers — Plaits macro-oscillator, stmlib SVF, OnePole.
-# Requires the eurorack static library (MIT — Emilie Gillet / Mutable Instruments).
+# MI DSP modules — kairos-grid-mi.kgext
+# MIT-licensed DSP code (Emilie Gillet / Mutable Instruments); LGPL-2.1-or-later wrappers.
+# Distributed as a standalone .kgext extension loaded at runtime by the kairos-grid plugin.
 # ---------------------------------------------------------------------------
 
 if(KAIROS_GRID_BUILD_MI AND KAIROS_GRID_BUILD_ENGINE)
 
-    # Point EURORACK_SRC_DIR at a local checkout to skip the network fetch:
-    #   cmake --preset dev -DEURORACK_SRC_DIR=/path/to/surge/libs/eurorack
     add_subdirectory(libs/eurorack)
+    add_subdirectory(src/kairos-grid-mi)
 
-    # INTERFACE convenience target — links engine + eurorack so consumers of
-    # the MI headers get all required include paths and link deps in one line.
+    # INTERFACE convenience target — engine + eurorack headers; used by tests to
+    # build against MI DSP classes directly without linking the .kgext shared lib.
     add_library(kairos-grid-mi INTERFACE)
     add_library(kairos_grid::mi ALIAS kairos-grid-mi)
 
@@ -222,24 +223,15 @@ if(KAIROS_GRID_BUILD_MI AND KAIROS_GRID_BUILD_ENGINE)
 endif() # KAIROS_GRID_BUILD_MI
 
 # ---------------------------------------------------------------------------
-# Surge XT DSP wrappers — oscillators, filters, effects.
-# Brings in surge-common and all required support libs via libs/surge.
+# Surge XT modules — kairos-grid-surge.kgext
+# GPL-3.0 (SurgeXT and its dependencies are GPL-3.0).
+# Distributed as a standalone .kgext extension loaded at runtime.
 # ---------------------------------------------------------------------------
 
 if(KAIROS_GRID_BUILD_SURGE AND KAIROS_GRID_BUILD_ENGINE)
 
-    # Point SURGE_SRC_DIR at a local surge checkout to skip the network fetch:
-    #   cmake --preset surge -DSURGE_SRC_DIR=/path/to/surge
     add_subdirectory(libs/surge)
-
-    # INTERFACE convenience target — exposes engine headers + all surge link deps.
-    add_library(kairos-grid-surge INTERFACE)
-    add_library(kairos_grid::surge-modules ALIAS kairos-grid-surge)
-
-    target_link_libraries(kairos-grid-surge INTERFACE
-        kairos_grid::engine
-        kairos_grid::surge
-    )
+    add_subdirectory(src/kairos-grid-surge)
 
 endif() # KAIROS_GRID_BUILD_SURGE
 
@@ -321,6 +313,13 @@ if(KAIROS_GRID_BUILD_WDF AND KAIROS_GRID_BUILD_ENGINE)
 
 endif() # KAIROS_GRID_BUILD_WDF
 
+if(KAIROS_GRID_BUILD_TAPE AND KAIROS_GRID_BUILD_ENGINE)
+
+    add_subdirectory(libs/chowtape)
+    add_subdirectory(src/kairos-grid-tape)
+
+endif() # KAIROS_GRID_BUILD_TAPE
+
 # ---------------------------------------------------------------------------
 # CLAP plugin wrapper — adds CLAP SDK dependency.
 # Brings in the engine library transitively.
@@ -348,21 +347,12 @@ if(KAIROS_GRID_BUILD_PLUGIN AND KAIROS_GRID_BUILD_ENGINE)
         kairos_grid::engine
         clap
         sanitizers::sanitizers
+        ${CMAKE_DL_LIBS}
     )
 
-    # Link MI DSP wrappers into the plugin when both are enabled.
-    # clap_plugin.cpp detects availability via KAIROS_GRID_PLUGIN_HAS_MI.
-    if(TARGET kairos_grid::mi)
-        target_link_libraries(kairos-grid PRIVATE kairos_grid::mi)
-        target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_MI=1)
-    endif()
-
-    # Link Surge XT wrappers into the plugin when both are enabled.
-    # clap_plugin.cpp detects availability via KAIROS_GRID_PLUGIN_HAS_SURGE.
-    if(TARGET kairos_grid::surge-modules)
-        target_link_libraries(kairos-grid PRIVATE kairos_grid::surge-modules)
-        target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_SURGE=1)
-    endif()
+    # MI DSP modules are distributed as kairos-grid-mi.kgext — a standalone
+    # LGPL-2.1-or-later shared library loaded at runtime via the .kgext extension mechanism.
+    # They are not linked into the core kairos-grid CLAP plugin.
 
     # Link Airwindows wrappers into the plugin when both are enabled.
     # clap_plugin.cpp detects availability via KAIROS_GRID_PLUGIN_HAS_AIRWINDOWS.
@@ -391,6 +381,20 @@ if(KAIROS_GRID_BUILD_PLUGIN AND KAIROS_GRID_BUILD_ENGINE)
         target_link_libraries(kairos-grid PRIVATE kairos_grid::wdf-modules)
         target_compile_definitions(kairos-grid PRIVATE KAIROS_GRID_PLUGIN_HAS_WDF=1)
     endif()
+
+    # TODO(.kgext extraction candidates): the following module families are still
+    # compiled into the core plugin and are candidates for .kgext extraction,
+    # following the same pattern as kairos-grid-mi and kairos-grid-surge:
+    #
+    #   kairos-grid-airwindows.kgext  — Airwindows saturation (Desk, Slew2, Spiral2)
+    #                                   LGPL-2.1-or-later; zero external deps
+    #   kairos-grid-fft.kgext         — KissFFT STFT spectral analysis tap
+    #                                   BSD-3-Clause; zero external deps
+    #   kairos-grid-wdf.kgext         — chowdsp_wdf circuit models (diode-clip, diode-half)
+    #                                   GPL-3.0 (chowdsp_wdf license)
+    #
+    # WASM (WasmGridModule) is intentionally excluded from this list — it is the
+    # hot-swap mechanism itself and belongs in the core plugin, not an extension.
 
     if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
         target_compile_options(kairos-grid PRIVATE

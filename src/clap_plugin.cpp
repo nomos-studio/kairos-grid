@@ -20,22 +20,7 @@
 #include <kairos_grid/environment_module.hpp>
 #include <kairos_grid/grid_graph.hpp>
 #include <kairos_grid/shaper/shaper_module.hpp>
-
-#if defined(KAIROS_GRID_PLUGIN_HAS_MI)
-#include <kairos_grid/mi/lpg_module.hpp>
-#include <kairos_grid/mi/one_pole_module.hpp>
-#include <kairos_grid/mi/plaits_module.hpp>
-#include <kairos_grid/mi/svf_module.hpp>
-#include <kairos_grid/mi/waveshaper_module.hpp>
-#endif
-
-#if defined(KAIROS_GRID_PLUGIN_HAS_SURGE)
-#include <kairos_grid/surge/surge_effect_module.hpp>
-#include <kairos_grid/surge/surge_filter_module.hpp>
-#include <kairos_grid/surge/surge_modulator_modules.hpp>
-#include <kairos_grid/surge/surge_osc_module.hpp>
-#include <kairos_grid/surge/surge_waveshaper_module.hpp>
-#endif
+#include <kairos_grid/z_delay_module.hpp>
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_AIRWINDOWS)
 #include <kairos_grid/airwindows/airwindows_module.hpp>
@@ -47,14 +32,27 @@
 #endif
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_FFT)
+#include <kairos_grid/fft/bin_shift_module.hpp>
 #include <kairos_grid/fft/fft_module.hpp>
+#include <kairos_grid/fft/partial_tracker_module.hpp>
+#include <kairos_grid/fft/spectral_freeze_module.hpp>
+#include <kairos_grid/fft/spectral_gate_module.hpp>
+#include <kairos_grid/fft/spectral_peaks_module.hpp>
+#include <kairos_grid/fft/spectral_smear_module.hpp>
 #endif
 
 #if defined(KAIROS_GRID_PLUGIN_HAS_WDF)
 #include <kairos_grid/wdf/wdf_modules.hpp>
 #endif
 
+#include <kairos_grid/clap_kairos_vcv_ctrl.h>
+#include <kairos_grid/grid_extension.hpp>
+#include <kairos_grid/vcv_bridge/vcv_bridge_module.hpp>
+
 #include <clap/clap.h>
+
+#include <dlfcn.h>
+#include <filesystem>
 
 #include <algorithm>
 #include <atomic>
@@ -64,6 +62,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -104,464 +103,317 @@ static const clap_plugin_descriptor_t k_descriptor = {
 // All built-in types are registered at first call via Meyers singleton.
 // ---------------------------------------------------------------------------
 
-struct ModuleSpec {
-    std::function<std::unique_ptr<GridModule>()>         make;
-    std::function<void(GridModule*, const std::string&)> setup;
-    // For modules whose factory needs a runtime argument (e.g. wasm_path):
-    std::function<std::unique_ptr<GridModule>(const std::string&)>           make_with_args;
-    std::function<void(GridModule*, const std::string&, const std::string&)> setup_with_args;
+// Concrete registry — holds built-in module types and accepts add() calls
+// from .kgext extensions loaded at startup.
+class ModuleRegistryImpl : public GridModuleRegistry {
+  public:
+    void add(std::string key, ModuleSpec spec) override {
+        reg_.emplace(std::move(key), std::move(spec));
+    }
+    const std::unordered_map<std::string, ModuleSpec>& map() const { return reg_; }
+
+  private:
+    std::unordered_map<std::string, ModuleSpec> reg_;
 };
 
-static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() {
-    static const std::unordered_map<std::string, ModuleSpec> reg = []() {
-        std::unordered_map<std::string, ModuleSpec> r;
-        r["env"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<EnvironmentModule>(); },
-            nullptr, nullptr, nullptr};
-        r["audio-in"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<AudioInputModule>(); },
-            nullptr, nullptr, nullptr};
-        r["audio-out"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<AudioOutputModule>(); },
-            nullptr, nullptr, nullptr};
-        // Shaper primitive — memoryless nonlinearity with CV-modulatable drive, shape, mix.
-        // Three patch-time curves: tanh (soft→hard saturation), fold (sine wavefold),
-        // quantize (bitcrush).  Tanh and Fold use ADAA; Quantize is intentionally raw.
-        // Inputs: in-l(0), in-r(1), drive(2), shape(3), mix(4).
-        {
-            auto shaper_setup = [](GridModule* m, const std::string& pfx) {
-                m->param_ports = {
-                    {pfx + "/drive", 2},
-                    {pfx + "/shape", 3},
-                    {pfx + "/mix", 4},
-                };
-            };
-            r["shaper-tanh"]  = {[]() -> std::unique_ptr<GridModule> {
-                                    return std::make_unique<ShaperModule>(ShaperCurve::Tanh);
-                                },
-                                 shaper_setup, nullptr, nullptr};
-            r["shaper-fold"]  = {[]() -> std::unique_ptr<GridModule> {
-                                    return std::make_unique<ShaperModule>(ShaperCurve::Fold);
-                                },
-                                 shaper_setup, nullptr, nullptr};
-            r["shaper-quant"] = {[]() -> std::unique_ptr<GridModule> {
-                                     return std::make_unique<ShaperModule>(ShaperCurve::Quantize);
-                                 },
-                                 shaper_setup, nullptr, nullptr};
-        }
-        // Peek primitive — CV-indexed buffer read (the read half of the CV-addressable
-        // buffer archetype).  Index input [0,1] maps to buffer positions [0, N-1].
-        // Interpolation kernel is patch-time (registered as distinct types).
-        // Inputs: index-l(0), index-r(1).  Outputs: out-l(0), out-r(1).
-        // Blank-buffer (zeroes) variants: "peek" (linear), "peek-nn" (nearest),
-        //   "peek-cubic" (cubic).
-        // Pre-filled variants: "peek-sine", "peek-tri", "peek-saw" (all linear interp).
-        r["peek"]       = {[]() -> std::unique_ptr<GridModule> {
-                         return std::make_unique<PeekModule>(PeekInterp::Linear);
-                     },
-                           nullptr, nullptr, nullptr};
-        r["peek-nn"]    = {[]() -> std::unique_ptr<GridModule> {
-                            return std::make_unique<PeekModule>(PeekInterp::None);
-                        },
-                           nullptr, nullptr, nullptr};
-        r["peek-cubic"] = {[]() -> std::unique_ptr<GridModule> {
-                               return std::make_unique<PeekModule>(PeekInterp::Cubic);
-                           },
-                           nullptr, nullptr, nullptr};
-        r["peek-sine"]  = {nullptr, nullptr,
-                           [](const std::string&) -> std::unique_ptr<GridModule> {
-                              auto m = std::make_unique<PeekModule>(PeekInterp::Linear);
-                              PeekModule::fill_sine(m->buffer());
-                              return m;
-                          },
-                           nullptr};
-        r["peek-tri"]   = {nullptr, nullptr,
-                           [](const std::string&) -> std::unique_ptr<GridModule> {
-                             auto m = std::make_unique<PeekModule>(PeekInterp::Linear);
-                             PeekModule::fill_triangle(m->buffer());
-                             return m;
-                         },
-                           nullptr};
-        r["peek-saw"]   = {nullptr, nullptr,
-                           [](const std::string&) -> std::unique_ptr<GridModule> {
-                             auto m = std::make_unique<PeekModule>(PeekInterp::Linear);
-                             PeekModule::fill_saw(m->buffer());
-                             return m;
-                         },
-                           nullptr};
-        // SAH — sample-and-hold, dual-use: modulation S&H (rising-edge trig) and
-        // SR reduction (internal periodic counter via rate CV).  Both trigger sources
-        // are active simultaneously; whichever fires first latches.
-        // Inputs: in-l(0), in-r(1), trig(2), rate(3).  Outputs: out-l(0), out-r(1).
-        {
-            auto sah_setup = [](GridModule* m, const std::string& pfx) {
-                m->param_ports = {
-                    {pfx + "/trig", 2},
-                    {pfx + "/rate", 3},
-                };
-            };
-            r["sah"] = {
-                []() -> std::unique_ptr<GridModule> { return std::make_unique<SahModule>(); },
-                sah_setup, nullptr, nullptr};
-        }
-        // Poke primitive — CV-gated buffer write with immediate linear readback.
-        // The write half of the CV-addressable buffer archetype; peek is the read-only
-        // wavetable oscillator half.  Separate write-pos and read-pos allow independent
-        // capture and playback heads.  Write-before-read each block: gated capture shows
-        // up in the same block's output.
-        // Inputs: in-l(0), in-r(1), write-pos(2), read-pos(3), gate(4).
-        // Outputs: out-l(0), out-r(1).
-        {
-            auto poke_setup = [](GridModule* m, const std::string& pfx) {
-                m->param_ports = {
-                    {pfx + "/write-pos", 2},
-                    {pfx + "/read-pos", 3},
-                    {pfx + "/gate", 4},
-                };
-            };
-            r["poke"] = {
-                []() -> std::unique_ptr<GridModule> { return std::make_unique<PokeModule>(); },
-                poke_setup, nullptr, nullptr};
-        }
-        // Buffer primitive — shared named storage, 0 inputs / 0 outputs.
-        // Standalone (no :buf-id in EDN): owns its own buffers, useful for pre-fill.
-        // With :buf-id: the factory injects pre-created shared_ptrs so peek and poke
-        // on the same :buf-id reference the same heap storage.
-        r["buffer"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<BufferModule>(); },
-            nullptr, nullptr, nullptr};
-#if defined(KAIROS_GRID_PLUGIN_HAS_MI)
-        r["plaits"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::PlaitsModule>(); },
-            [](GridModule* m, const std::string& pfx) {
-                m->param_ports = {
-                    {pfx + "/harmonics", 1}, {pfx + "/timbre", 2}, {pfx + "/morph", 3},
-                    {pfx + "/engine", 6},    {pfx + "/level", 5},
-                };
-            },
-            nullptr, nullptr};
-        r["svf"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::SvfModule>(); },
-            [](GridModule* m, const std::string& pfx) {
-                m->param_ports = {
-                    {pfx + "/cutoff", 1},
-                    {pfx + "/q", 2},
-                };
-            },
-            nullptr, nullptr};
-        r["one-pole"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::OnePoleModule>(); },
-            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/freq", 1}}; },
-            nullptr, nullptr};
-        // Low-pass gate variants: "lpg" is clean (cv maps directly); "lpg-vactrol"
-        // adds asymmetric one-pole dynamics on the cv path with per-instance spread.
-        r["lpg"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::LpgModule>(false); },
-            [](GridModule* m, const std::string& pfx) {
-                m->param_ports = {{pfx + "/cv", 2}, {pfx + "/character", 4}};
-            },
-            nullptr, nullptr};
-        r["lpg-vactrol"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<mi::LpgModule>(true); },
-            [](GridModule* m, const std::string& pfx) {
-                m->param_ports = {{pfx + "/cv", 2}, {pfx + "/decay", 3}, {pfx + "/character", 4}};
-            },
-            nullptr, nullptr};
-        // Scalar ADAA waveshapers — four shapes, no oversampling.
-        // Inputs: in-l(0), in-r(1), drive(2, 0=unity, 1=16×).
-        r["ws-hard"] = {
-            []() -> std::unique_ptr<GridModule> {
-                return std::make_unique<mi::WaveshaperModule>(&mi::WaveshaperModule::f_hard,
-                                                              &mi::WaveshaperModule::F_hard);
-            },
-            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
-            nullptr, nullptr};
-        r["ws-tanh"] = {
-            []() -> std::unique_ptr<GridModule> {
-                return std::make_unique<mi::WaveshaperModule>(&mi::WaveshaperModule::f_tanh,
-                                                              &mi::WaveshaperModule::F_tanh);
-            },
-            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
-            nullptr, nullptr};
-        r["ws-soft"] = {
-            []() -> std::unique_ptr<GridModule> {
-                return std::make_unique<mi::WaveshaperModule>(&mi::WaveshaperModule::f_soft,
-                                                              &mi::WaveshaperModule::F_soft);
-            },
-            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
-            nullptr, nullptr};
-        r["ws-fold"] = {
-            []() -> std::unique_ptr<GridModule> {
-                return std::make_unique<mi::WaveshaperModule>(&mi::WaveshaperModule::f_fold,
-                                                              &mi::WaveshaperModule::F_fold);
-            },
-            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
-            nullptr, nullptr};
-        // Triangular ADAA wavefolder — Buchla/Serge west-coast topology.
-        // Hard reflections at ±1; multi-fold at high drive; output bounded ±1.
-        // Inputs: in-l(0), in-r(1), drive(2, 0=unity, 1=16×).
-        r["folder"] = {
-            []() -> std::unique_ptr<GridModule> {
-                return std::make_unique<mi::WaveshaperModule>(&mi::WaveshaperModule::f_fold_tri,
-                                                              &mi::WaveshaperModule::F_fold_tri);
-            },
-            [](GridModule* m, const std::string& pfx) { m->param_ports = {{pfx + "/drive", 2}}; },
-            nullptr, nullptr};
-#endif
-#if defined(KAIROS_GRID_PLUGIN_HAS_SURGE)
-        {
-            // Shared setup lambdas — filters: cutoff at port 2, resonance at port 3.
-            const auto filter_setup = [](GridModule* m, const std::string& pfx) {
-                m->param_ports = {{pfx + "/cutoff", 2}, {pfx + "/resonance", 3}};
-            };
-            // Effects: n_fx_params params at ports 2..2+n_fx_params-1.
-            const auto effect_setup = [](GridModule* m, const std::string& pfx) {
-                m->param_ports.clear();
-                for (int i = 0; i < n_fx_params; ++i)
-                    m->param_ports.push_back({pfx + "/p" + std::to_string(i), 2 + i});
-            };
-            // Oscillators: n_osc_params params at ports 1..1+n_osc_params-1.
-            const auto osc_setup = [](GridModule* m, const std::string& pfx) {
-                m->param_ports.clear();
-                for (int i = 0; i < n_osc_params; ++i)
-                    m->param_ports.push_back({pfx + "/p" + std::to_string(i), 1 + i});
-            };
+static ModuleRegistryImpl& get_module_registry() {
+    static ModuleRegistryImpl registry;
+    return registry;
+}
 
-            // Surge sst-filters
-            r["ladder"]  = {[]() -> std::unique_ptr<GridModule> {
-                               return std::make_unique<surge::VintageLadderModule>();
-                           },
-                            filter_setup, nullptr, nullptr};
-            r["diode"]   = {[]() -> std::unique_ptr<GridModule> {
-                              return std::make_unique<surge::DiodeLadderModule>();
-                          },
-                            filter_setup, nullptr, nullptr};
-            r["k35-lp"]  = {[]() -> std::unique_ptr<GridModule> {
-                               return std::make_unique<surge::K35LPModule>();
-                           },
-                            filter_setup, nullptr, nullptr};
-            r["k35-hp"]  = {[]() -> std::unique_ptr<GridModule> {
-                               return std::make_unique<surge::K35HPModule>();
-                           },
-                            filter_setup, nullptr, nullptr};
-            r["obxd-4p"] = {[]() -> std::unique_ptr<GridModule> {
-                                return std::make_unique<surge::OBXD4PoleModule>();
-                            },
-                            filter_setup, nullptr, nullptr};
-            r["lp12"]    = {[]() -> std::unique_ptr<GridModule> {
-                             return std::make_unique<surge::LP12Module>();
-                         },
-                            filter_setup, nullptr, nullptr};
-            r["lp24"]    = {[]() -> std::unique_ptr<GridModule> {
-                             return std::make_unique<surge::LP24Module>();
-                         },
-                            filter_setup, nullptr, nullptr};
-            r["hp12"]    = {[]() -> std::unique_ptr<GridModule> {
-                             return std::make_unique<surge::HP12Module>();
-                         },
-                            filter_setup, nullptr, nullptr};
-            r["hp24"]    = {[]() -> std::unique_ptr<GridModule> {
-                             return std::make_unique<surge::HP24Module>();
-                         },
-                            filter_setup, nullptr, nullptr};
-            r["bp12"]    = {[]() -> std::unique_ptr<GridModule> {
-                             return std::make_unique<surge::BP12Module>();
-                         },
-                            filter_setup, nullptr, nullptr};
-            r["bp24"]    = {[]() -> std::unique_ptr<GridModule> {
-                             return std::make_unique<surge::BP24Module>();
-                         },
-                            filter_setup, nullptr, nullptr};
-
-            // Surge effects
-            r["reverb1"]    = {[]() -> std::unique_ptr<GridModule> {
-                                return std::make_unique<surge::Reverb1Module>();
-                            },
-                               effect_setup, nullptr, nullptr};
-            r["reverb2"]    = {[]() -> std::unique_ptr<GridModule> {
-                                return std::make_unique<surge::Reverb2Module>();
-                            },
-                               effect_setup, nullptr, nullptr};
-            r["chorus"]     = {[]() -> std::unique_ptr<GridModule> {
-                               return std::make_unique<surge::ChorusModule>();
-                           },
-                               effect_setup, nullptr, nullptr};
-            r["delay"]      = {[]() -> std::unique_ptr<GridModule> {
-                              return std::make_unique<surge::DelayModule>();
-                          },
-                               effect_setup, nullptr, nullptr};
-            r["phaser"]     = {[]() -> std::unique_ptr<GridModule> {
-                               return std::make_unique<surge::PhaserModule>();
-                           },
-                               effect_setup, nullptr, nullptr};
-            r["flanger"]    = {[]() -> std::unique_ptr<GridModule> {
-                                return std::make_unique<surge::FlangerModule>();
-                            },
-                               effect_setup, nullptr, nullptr};
-            r["bonsai"]     = {[]() -> std::unique_ptr<GridModule> {
-                               return std::make_unique<surge::BonsaiModule>();
-                           },
-                               effect_setup, nullptr, nullptr};
-            r["ensemble"]   = {[]() -> std::unique_ptr<GridModule> {
-                                 return std::make_unique<surge::EnsembleModule>();
-                             },
-                               effect_setup, nullptr, nullptr};
-            r["distortion"] = {[]() -> std::unique_ptr<GridModule> {
-                                   return std::make_unique<surge::DistortionModule>();
-                               },
-                               effect_setup, nullptr, nullptr};
-
-            // Surge oscillators
-            r["classic"]  = {[]() -> std::unique_ptr<GridModule> {
-                                return std::make_unique<surge::ClassicOscModule>();
-                            },
-                             osc_setup, nullptr, nullptr};
-            r["sine-osc"] = {[]() -> std::unique_ptr<GridModule> {
-                                 return std::make_unique<surge::SineOscModule>();
-                             },
-                             osc_setup, nullptr, nullptr};
-            r["modern"]   = {[]() -> std::unique_ptr<GridModule> {
-                               return std::make_unique<surge::ModernOscModule>();
-                           },
-                             osc_setup, nullptr, nullptr};
-            r["fm2"]      = {[]() -> std::unique_ptr<GridModule> {
-                            return std::make_unique<surge::FM2OscModule>();
-                        },
-                             osc_setup, nullptr, nullptr};
-            r["fm3"]      = {[]() -> std::unique_ptr<GridModule> {
-                            return std::make_unique<surge::FM3OscModule>();
-                        },
-                             osc_setup, nullptr, nullptr};
-            r["string"]   = {[]() -> std::unique_ptr<GridModule> {
-                               return std::make_unique<surge::StringOscModule>();
-                           },
-                             osc_setup, nullptr, nullptr};
-            r["twist"]    = {[]() -> std::unique_ptr<GridModule> {
-                              return std::make_unique<surge::TwistOscModule>();
-                          },
-                             osc_setup, nullptr, nullptr};
-
-            // Surge modulators — param_ports and taps declared in constructor; no setup lambda.
-            r["adsr"] = {[]() -> std::unique_ptr<GridModule> {
-                             return std::make_unique<surge::ADSRModule>();
-                         },
-                         nullptr, nullptr, nullptr};
-            r["lfo"]  = {[]() -> std::unique_ptr<GridModule> {
-                            return std::make_unique<surge::SimpleLFOModule>();
-                        },
-                         nullptr, nullptr, nullptr};
-#endif
-            // Beat-clock subdivision gate — derives from EnvironmentModule beat_phase output.
-            // Inputs: beat_phase(0), division(1), pulse_width(2), phase_offset(3).
-            // Output: gate 0.0/1.0.  Param ports: clock/division, clock/pulse_width,
-            // clock/phase_offset.  Tap: signal/gate.
-            // Typical patch: env beat_phase output → clock-div input 0; gate output → trigger
-            // target.
-            r["clock-div"] = {[]() -> std::unique_ptr<GridModule> {
-                                  return std::make_unique<ClockDivisionModule>();
+static void populate_builtins(ModuleRegistryImpl& r) {
+    r.add("env",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<EnvironmentModule>(); },
+           nullptr, nullptr, nullptr});
+    r.add("audio-in",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<AudioInputModule>(); },
+           nullptr, nullptr, nullptr});
+    r.add("audio-out",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<AudioOutputModule>(); },
+           nullptr, nullptr, nullptr});
+    // Shaper primitive — memoryless nonlinearity with CV-modulatable drive, shape, mix.
+    // Three patch-time curves: tanh (soft→hard saturation), fold (sine wavefold),
+    // quantize (bitcrush).  Tanh and Fold use ADAA; Quantize is intentionally raw.
+    // Inputs: in-l(0), in-r(1), drive(2), shape(3), mix(4).
+    {
+        auto shaper_setup = [](GridModule* m, const std::string& pfx) {
+            m->param_ports = {
+                {pfx + "/drive", 2},
+                {pfx + "/shape", 3},
+                {pfx + "/mix", 4},
+            };
+        };
+        r.add("shaper-tanh", {[]() -> std::unique_ptr<GridModule> {
+                                  return std::make_unique<ShaperModule>(ShaperCurve::Tanh);
                               },
-                              nullptr, nullptr, nullptr};
-#if defined(KAIROS_GRID_PLUGIN_HAS_SURGE)
-
-            // sst-waveshapers — curated palette bridged via 4-sample SIMD buffer.
-            // All share the same port layout as WaveshaperModule: in-l(0), in-r(1),
-            // drive(2, 0=unity, 1=16×).  4-sample latency (~0.08 ms at 48 kHz).
-            using WS     = sst::waveshapers::WaveshaperType;
-            auto ws_make = [](WS t) {
-                return [t]() -> std::unique_ptr<GridModule> {
-                    return std::make_unique<surge::SurgeWaveshaperModule>(t);
-                };
+                              shaper_setup, nullptr, nullptr});
+        r.add("shaper-fold", {[]() -> std::unique_ptr<GridModule> {
+                                  return std::make_unique<ShaperModule>(ShaperCurve::Fold);
+                              },
+                              shaper_setup, nullptr, nullptr});
+        r.add("shaper-quant", {[]() -> std::unique_ptr<GridModule> {
+                                   return std::make_unique<ShaperModule>(ShaperCurve::Quantize);
+                               },
+                               shaper_setup, nullptr, nullptr});
+    }
+    // Peek primitive — CV-indexed buffer read (the read half of the CV-addressable
+    // buffer archetype).  Index input [0,1] maps to buffer positions [0, N-1].
+    // Interpolation kernel is patch-time (registered as distinct types).
+    // Inputs: index-l(0), index-r(1).  Outputs: out-l(0), out-r(1).
+    // Blank-buffer (zeroes) variants: "peek" (linear), "peek-nn" (nearest),
+    //   "peek-cubic" (cubic).
+    // Pre-filled variants: "peek-sine", "peek-tri", "peek-saw" (all linear interp).
+    r.add("peek", {[]() -> std::unique_ptr<GridModule> {
+                       return std::make_unique<PeekModule>(PeekInterp::Linear);
+                   },
+                   nullptr, nullptr, nullptr});
+    r.add("peek-nn", {[]() -> std::unique_ptr<GridModule> {
+                          return std::make_unique<PeekModule>(PeekInterp::None);
+                      },
+                      nullptr, nullptr, nullptr});
+    r.add("peek-cubic", {[]() -> std::unique_ptr<GridModule> {
+                             return std::make_unique<PeekModule>(PeekInterp::Cubic);
+                         },
+                         nullptr, nullptr, nullptr});
+    r.add("peek-sine", {nullptr, nullptr,
+                        [](const std::string&) -> std::unique_ptr<GridModule> {
+                            auto m = std::make_unique<PeekModule>(PeekInterp::Linear);
+                            PeekModule::fill_sine(m->buffer());
+                            return m;
+                        },
+                        nullptr});
+    r.add("peek-tri", {nullptr, nullptr,
+                       [](const std::string&) -> std::unique_ptr<GridModule> {
+                           auto m = std::make_unique<PeekModule>(PeekInterp::Linear);
+                           PeekModule::fill_triangle(m->buffer());
+                           return m;
+                       },
+                       nullptr});
+    r.add("peek-saw", {nullptr, nullptr,
+                       [](const std::string&) -> std::unique_ptr<GridModule> {
+                           auto m = std::make_unique<PeekModule>(PeekInterp::Linear);
+                           PeekModule::fill_saw(m->buffer());
+                           return m;
+                       },
+                       nullptr});
+    // SAH — sample-and-hold, dual-use: modulation S&H (rising-edge trig) and
+    // SR reduction (internal periodic counter via rate CV).  Both trigger sources
+    // are active simultaneously; whichever fires first latches.
+    // Inputs: in-l(0), in-r(1), trig(2), rate(3).  Outputs: out-l(0), out-r(1).
+    {
+        auto sah_setup = [](GridModule* m, const std::string& pfx) {
+            m->param_ports = {
+                {pfx + "/trig", 2},
+                {pfx + "/rate", 3},
             };
-            auto ws_setup = [](GridModule* m, const std::string& pfx) {
-                m->param_ports = {{pfx + "/drive", 2}};
+        };
+        r.add("sah", {[]() -> std::unique_ptr<GridModule> { return std::make_unique<SahModule>(); },
+                      sah_setup, nullptr, nullptr});
+    }
+    // Poke primitive — CV-gated buffer write with immediate linear readback.
+    // The write half of the CV-addressable buffer archetype; peek is the read-only
+    // wavetable oscillator half.  Separate write-pos and read-pos allow independent
+    // capture and playback heads.  Write-before-read each block: gated capture shows
+    // up in the same block's output.
+    // Inputs: in-l(0), in-r(1), write-pos(2), read-pos(3), gate(4).
+    // Outputs: out-l(0), out-r(1).
+    {
+        auto poke_setup = [](GridModule* m, const std::string& pfx) {
+            m->param_ports = {
+                {pfx + "/write-pos", 2},
+                {pfx + "/read-pos", 3},
+                {pfx + "/gate", 4},
             };
-
-            // Saturators
-            r["sst-soft"]   = {ws_make(WS::wst_soft), ws_setup, nullptr, nullptr};
-            r["sst-hard"]   = {ws_make(WS::wst_hard), ws_setup, nullptr, nullptr};
-            r["sst-asym"]   = {ws_make(WS::wst_asym), ws_setup, nullptr, nullptr};
-            r["sst-medium"] = {ws_make(WS::wst_zamsat), ws_setup, nullptr, nullptr};
-            r["sst-ojd"]    = {ws_make(WS::wst_ojd), ws_setup, nullptr, nullptr};
-
-            // Fuzz
-            r["sst-fuzz"]       = {ws_make(WS::wst_fuzz), ws_setup, nullptr, nullptr};
-            r["sst-fuzz-heavy"] = {ws_make(WS::wst_fuzzheavy), ws_setup, nullptr, nullptr};
-
-            // Wavefolders
-            r["sst-westfold"] = {ws_make(WS::wst_westfold), ws_setup, nullptr, nullptr};
-            r["sst-dualfold"] = {ws_make(WS::wst_dualfold), ws_setup, nullptr, nullptr};
-            r["sst-softfold"] = {ws_make(WS::wst_softfold), ws_setup, nullptr, nullptr};
-
-            // Harmonic shapers (Chebyshev — add specific harmonic content)
-            r["sst-harmonic2"] = {ws_make(WS::wst_cheby2), ws_setup, nullptr, nullptr};
-            r["sst-harmonic3"] = {ws_make(WS::wst_cheby3), ws_setup, nullptr, nullptr};
-        }
-#endif
+        };
+        r.add("poke",
+              {[]() -> std::unique_ptr<GridModule> { return std::make_unique<PokeModule>(); },
+               poke_setup, nullptr, nullptr});
+    }
+    // Buffer primitive — shared named storage, 0 inputs / 0 outputs.
+    // Standalone (no :buf-id in EDN): owns its own buffers, useful for pre-fill.
+    // With :buf-id: the factory injects pre-created shared_ptrs so peek and poke
+    // on the same :buf-id reference the same heap storage.
+    r.add("buffer",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<BufferModule>(); },
+           nullptr, nullptr, nullptr});
+    // Beat-clock subdivision gate — derives from EnvironmentModule beat_phase output.
+    // Inputs: beat_phase(0), division(1), pulse_width(2), phase_offset(3).
+    // Output: gate 0.0/1.0.  Param ports: clock/division, clock/pulse_width,
+    // clock/phase_offset.  Tap: signal/gate.
+    // Typical patch: env beat_phase output → clock-div input 0; gate output → trigger
+    // target.
+    r.add("clock-div",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<ClockDivisionModule>(); },
+           nullptr, nullptr, nullptr});
 #if defined(KAIROS_GRID_PLUGIN_HAS_AIRWINDOWS)
-        {
-            // Airwindows saturation modules — no external dependencies.
-            // Audio convention: ±1 V normalised full-scale; no internal scaling.
-            // aw-desk:   in-l(0), in-r(1) → out-l(0), out-r(1).  No params.
-            // aw-slew:   in-l(0), in-r(1), slew(2, [0,1]V) → out-l(0), out-r(1).
-            // aw-spiral: in-l(0), in-r(1), drive(2, [0,1]V), wet(3, [0,1]V)
-            //            → out-l(0), out-r(1).
-            using namespace airwindows;
+    {
+        // Airwindows saturation modules — no external dependencies.
+        // Audio convention: ±1 V normalised full-scale; no internal scaling.
+        // aw-desk:   in-l(0), in-r(1) → out-l(0), out-r(1).  No params.
+        // aw-slew:   in-l(0), in-r(1), slew(2, [0,1]V) → out-l(0), out-r(1).
+        // aw-spiral: in-l(0), in-r(1), drive(2, [0,1]V), wet(3, [0,1]V)
+        //            → out-l(0), out-r(1).
+        using namespace airwindows;
 
-            r["aw-desk"] = {
-                []() -> std::unique_ptr<GridModule> { return std::make_unique<DeskModule>(); },
-                nullptr, nullptr, nullptr};
+        r.add("aw-desk",
+              {[]() -> std::unique_ptr<GridModule> { return std::make_unique<DeskModule>(); },
+               nullptr, nullptr, nullptr});
 
-            r["aw-slew"] = {
-                []() -> std::unique_ptr<GridModule> { return std::make_unique<SlewModule>(); },
-                nullptr, nullptr, nullptr};
+        r.add("aw-slew",
+              {[]() -> std::unique_ptr<GridModule> { return std::make_unique<SlewModule>(); },
+               nullptr, nullptr, nullptr});
 
-            r["aw-spiral"] = {
-                []() -> std::unique_ptr<GridModule> { return std::make_unique<SpiralModule>(); },
-                nullptr, nullptr, nullptr};
-        }
+        r.add("aw-spiral",
+              {[]() -> std::unique_ptr<GridModule> { return std::make_unique<SpiralModule>(); },
+               nullptr, nullptr, nullptr});
+    }
 #endif
 #if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
-        r["wasm"] = {nullptr, // make (unused — wasm uses make_with_args)
-                     nullptr, // setup (unused — wasm uses setup_with_args)
-                     [](const std::string& wasm_path) -> std::unique_ptr<GridModule> {
-                         return WasmGridModule::create(wasm_path);
-                     },
-                     [](GridModule* m, const std::string& /*type*/, const std::string& stem) {
-                         for (auto& pp : m->param_ports)
-                             pp.name = stem + "/" + pp.name;
-                     }};
+    r.add("wasm", {nullptr, // make (unused — wasm uses make_with_args)
+                   nullptr, // setup (unused — wasm uses setup_with_args)
+                   [](const std::string& wasm_path) -> std::unique_ptr<GridModule> {
+                       return WasmGridModule::create(wasm_path);
+                   },
+                   [](GridModule* m, const std::string& /*type*/, const std::string& stem) {
+                       for (auto& pp : m->param_ports)
+                           pp.name = stem + "/" + pp.name;
+                   }});
 #endif
 #if defined(KAIROS_GRID_PLUGIN_HAS_FFT)
-        // Spectral analysis tap — 2 audio inputs, 6 CV descriptor outputs.
-        // Observes audio without altering it; fan-out from same source is free.
-        using kairos_grid::FftModule;
-        r["fft"] = {[]() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(); },
-                    nullptr, nullptr, nullptr};
-        r["fft-512"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(512); },
-            nullptr, nullptr, nullptr};
-        r["fft-2048"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(2048); },
-            nullptr, nullptr, nullptr};
-        r["fft-4096"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(4096); },
-            nullptr, nullptr, nullptr};
+    // Spectral analysis tap — 2 audio inputs, 6 CV descriptor outputs.
+    // Observes audio without altering it; fan-out from same source is free.
+    using kairos_grid::FftModule;
+    r.add("fft", {[]() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(); },
+                  nullptr, nullptr, nullptr});
+    r.add("fft-512",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(512); },
+           nullptr, nullptr, nullptr});
+    r.add("fft-2048",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(2048); },
+           nullptr, nullptr, nullptr});
+    r.add("fft-4096",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<FftModule>(4096); },
+           nullptr, nullptr, nullptr});
+
+    // Spectral freeze resynthesis — 2 audio inputs + freeze gate, 2 audio outputs.
+    // Latches magnitude spectrum on rising edge; resynthesizes via IFFT + random phases.
+    using kairos_grid::SpectralFreezeModule;
+    r.add("spectral-freeze",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<SpectralFreezeModule>(); },
+           nullptr, nullptr, nullptr});
+    r.add("spectral-freeze-512", {[]() -> std::unique_ptr<GridModule> {
+                                      return std::make_unique<SpectralFreezeModule>(512);
+                                  },
+                                  nullptr, nullptr, nullptr});
+    r.add("spectral-freeze-2048", {[]() -> std::unique_ptr<GridModule> {
+                                       return std::make_unique<SpectralFreezeModule>(2048);
+                                   },
+                                   nullptr, nullptr, nullptr});
+    r.add("spectral-freeze-4096", {[]() -> std::unique_ptr<GridModule> {
+                                       return std::make_unique<SpectralFreezeModule>(4096);
+                                   },
+                                   nullptr, nullptr, nullptr});
+
+    // Spectral smear — Panharmonium-style temporal averaging + density + IFFT resynthesis.
+    // 4 inputs (in-l, in-r, smear [0,1], density [0,1]), 2 audio outputs.
+    using kairos_grid::SpectralSmearModule;
+    r.add("spectral-smear",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<SpectralSmearModule>(); },
+           nullptr, nullptr, nullptr});
+    r.add("spectral-smear-512", {[]() -> std::unique_ptr<GridModule> {
+                                     return std::make_unique<SpectralSmearModule>(512);
+                                 },
+                                 nullptr, nullptr, nullptr});
+    r.add("spectral-smear-2048", {[]() -> std::unique_ptr<GridModule> {
+                                      return std::make_unique<SpectralSmearModule>(2048);
+                                  },
+                                  nullptr, nullptr, nullptr});
+    r.add("spectral-smear-4096", {[]() -> std::unique_ptr<GridModule> {
+                                      return std::make_unique<SpectralSmearModule>(4096);
+                                  },
+                                  nullptr, nullptr, nullptr});
+
+    // Spectral gate — per-bin magnitude gating; original-phase synthesis.
+    // 4 inputs (in-l, in-r, threshold [0,1], floor [0,1]), 2 audio outputs.
+    using kairos_grid::SpectralGateModule;
+    r.add("spectral-gate",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<SpectralGateModule>(); },
+           nullptr, nullptr, nullptr});
+    r.add("spectral-gate-512", {[]() -> std::unique_ptr<GridModule> {
+                                    return std::make_unique<SpectralGateModule>(512);
+                                },
+                                nullptr, nullptr, nullptr});
+    r.add("spectral-gate-2048", {[]() -> std::unique_ptr<GridModule> {
+                                     return std::make_unique<SpectralGateModule>(2048);
+                                 },
+                                 nullptr, nullptr, nullptr});
+    r.add("spectral-gate-4096", {[]() -> std::unique_ptr<GridModule> {
+                                     return std::make_unique<SpectralGateModule>(4096);
+                                 },
+                                 nullptr, nullptr, nullptr});
+
+    // Bin-shift — frequency-domain pitch shift by integer bin displacement.
+    // 3 inputs (in-l, in-r, shift [-1,1]), 2 audio outputs.
+    using kairos_grid::BinShiftModule;
+    r.add("bin-shift",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<BinShiftModule>(); },
+           nullptr, nullptr, nullptr});
+    r.add("bin-shift-512",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<BinShiftModule>(512); },
+           nullptr, nullptr, nullptr});
+    r.add("bin-shift-2048",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<BinShiftModule>(2048); },
+           nullptr, nullptr, nullptr});
+    r.add("bin-shift-4096",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<BinShiftModule>(4096); },
+           nullptr, nullptr, nullptr});
+
+    // Spectral-peaks — STFT peak detector; up to 8 peaks as CV + trigger.
+    // 3 inputs (in-l, in-r, threshold [0,1]), 17 outputs (freq×8, amp×8, trigger).
+    using kairos_grid::SpectralPeaksModule;
+    r.add("spectral-peaks",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<SpectralPeaksModule>(); },
+           nullptr, nullptr, nullptr});
+    r.add("spectral-peaks-512", {[]() -> std::unique_ptr<GridModule> {
+                                     return std::make_unique<SpectralPeaksModule>(512);
+                                 },
+                                 nullptr, nullptr, nullptr});
+    r.add("spectral-peaks-2048", {[]() -> std::unique_ptr<GridModule> {
+                                      return std::make_unique<SpectralPeaksModule>(2048);
+                                  },
+                                  nullptr, nullptr, nullptr});
+    r.add("spectral-peaks-4096", {[]() -> std::unique_ptr<GridModule> {
+                                      return std::make_unique<SpectralPeaksModule>(4096);
+                                  },
+                                  nullptr, nullptr, nullptr});
+
+    // Partial-tracker — polyphonic voice allocator for spectral-peaks output.
+    // 18 inputs (freq×8, amp×8, trigger, smooth), 16 outputs (voice_freq×8, voice_amp×8).
+    using kairos_grid::PartialTrackerModule;
+    r.add("partial-tracker",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<PartialTrackerModule>(); },
+           nullptr, nullptr, nullptr});
 #endif
 #if defined(KAIROS_GRID_PLUGIN_HAS_WDF)
-        // WDF circuit models — physically accurate nonlinear modules.
-        // 2 inputs (audio in, drive), 1 output (audio out).
-        using kairos_grid::DiodeClipModule;
-        using kairos_grid::DiodeHalfModule;
-        r["diode-clip"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<DiodeClipModule>(); },
-            nullptr, nullptr, nullptr};
-        r["diode-half"] = {
-            []() -> std::unique_ptr<GridModule> { return std::make_unique<DiodeHalfModule>(); },
-            nullptr, nullptr, nullptr};
+    // WDF circuit models — physically accurate nonlinear modules.
+    // 2 inputs (audio in, drive), 1 output (audio out).
+    using kairos_grid::DiodeClipModule;
+    using kairos_grid::DiodeHalfModule;
+    r.add("diode-clip",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<DiodeClipModule>(); },
+           nullptr, nullptr, nullptr});
+    r.add("diode-half",
+          {[]() -> std::unique_ptr<GridModule> { return std::make_unique<DiodeHalfModule>(); },
+           nullptr, nullptr, nullptr});
 #endif
-        return r;
-    }();
-    return reg;
+    // z-1 — single-sample unit delay.  The only mechanism through which a
+    // feedback arc may be constructed in the kairos-grid DAG.
+    // "z-1"  : user-visible name (Z-transform convention; opt-in feedback)
+    // "_z-1" : compiler-generated name (Alembic auto-inserts to break cycles)
+    r.add("z-1", {[]() -> std::unique_ptr<GridModule> { return std::make_unique<ZDelayModule>(); },
+                  nullptr, nullptr, nullptr});
+    r.add("_z-1", {[]() -> std::unique_ptr<GridModule> { return std::make_unique<ZDelayModule>(); },
+                   nullptr, nullptr, nullptr});
 }
 
 // ---------------------------------------------------------------------------
@@ -579,8 +431,10 @@ static const std::unordered_map<std::string, ModuleSpec>& get_module_registry() 
 struct ParsedModule {
     std::string type;
     std::string wasm_path;
-    std::string buf_id;  // :buf-id — links buffer/peek/poke to shared storage
-    int         size{0}; // :size   — buffer size; 0 = use default (2048)
+    std::string buf_id;        // :buf-id  — links buffer/peek/poke to shared storage
+    int         size{0};       // :size    — buffer size; 0 = use default (2048)
+    std::string shm_name;      // :shm-name — POSIX shm name prefix for "vcv-bridge"
+    int         n_channels{2}; // :n-channels — audio channel count for "vcv-bridge"
 };
 struct ParsedCable {
     int from_mod, from_port, to_mod, to_port;
@@ -689,10 +543,14 @@ static ParsedPatch parse_patch_edn(const char* edn_str, uint32_t len) {
                 }
                 const std::string t = extract_type(s, map_start, pos);
                 if (!t.empty()) {
-                    const std::string wp = extract_str_field(s, ":wasm-path", map_start, pos);
-                    const std::string bi = extract_str_field(s, ":buf-id", map_start, pos);
-                    const int         sz = extract_int_field(s, ":size", map_start, pos);
-                    result.modules.push_back({t, wp, bi, sz});
+                    const std::string wp  = extract_str_field(s, ":wasm-path", map_start, pos);
+                    const std::string bi  = extract_str_field(s, ":buf-id", map_start, pos);
+                    const int         sz  = extract_int_field(s, ":size", map_start, pos);
+                    const std::string sn  = extract_str_field(s, ":shm-name", map_start, pos);
+                    int               nch = extract_int_field(s, ":n-channels", map_start, pos);
+                    if (nch == 0)
+                        nch = 2;
+                    result.modules.push_back({t, wp, bi, sz, sn, nch});
                 }
             } else {
                 ++pos;
@@ -748,10 +606,12 @@ struct PatchSlot {
     std::optional<GridEngine> engine;
     AudioInputModule*         audio_in{nullptr};
     AudioOutputModule*        audio_out{nullptr};
-    std::vector<float>        param_frame;
-    int                       env_tempo_id{-1}, env_beat_id{-1}, env_bar_id{-1};
-    int                       env_playing_id{-1}, env_note_id{-1}, env_gate_id{-1};
-    int                       env_velocity_id{-1};
+    // Raw pointer valid for lifetime of engine (engine owns the module).
+    kairos_grid::vcv_bridge::VCVBridgeModule* vcv_tty_bridge{nullptr};
+    std::vector<float>                        param_frame;
+    int                                       env_tempo_id{-1}, env_beat_id{-1}, env_bar_id{-1};
+    int                                       env_playing_id{-1}, env_note_id{-1}, env_gate_id{-1};
+    int                                       env_velocity_id{-1};
 };
 
 // Extract the filename stem (no directory, no extension) from a path.
@@ -764,23 +624,46 @@ static std::string stem_from_path(const std::string& path) {
 }
 
 static PatchSlot* build_patch_slot(const ParsedPatch& patch, float sr) {
-    const auto& reg = get_module_registry();
+    const auto& reg = get_module_registry().map();
 
     GridGraph          g;
     AudioInputModule*  audio_in  = nullptr;
     AudioOutputModule* audio_out = nullptr;
+    using kairos_grid::vcv_bridge::VCVBridgeModule;
+    VCVBridgeModule* vcv_tty_bridge = nullptr;
 
     // Pre-pass: materialise shared storage for all :buf-id groups.  The first module
     // that references a buf_id determines the buffer size; subsequent references inherit
     // that allocation.  This allows peek and poke on the same :buf-id to share memory
     // without GridGraph needing to know about named buffers.
+    //
+    // FFT types: size = window/2+1 (DC to Nyquist), not a general user-specified size.
+    // A peek on the same :buf-id reads directly from the live magnitude array.
     struct SharedBufs {
         std::shared_ptr<std::vector<float>> l, r;
     };
+
+    auto fft_window_for_type = [](const std::string& t) -> std::size_t {
+        if (t == "fft-512")
+            return 512u;
+        if (t == "fft-2048")
+            return 2048u;
+        if (t == "fft-4096")
+            return 4096u;
+        return 1024u; // "fft"
+    };
+    auto is_fft_type = [](const std::string& t) {
+        return t == "fft" || t == "fft-512" || t == "fft-2048" || t == "fft-4096";
+    };
+
     std::unordered_map<std::string, SharedBufs> buf_registry;
     for (const auto& pm : patch.modules) {
         if (!pm.buf_id.empty() && !buf_registry.count(pm.buf_id)) {
-            const std::size_t sz = pm.size > 0 ? static_cast<std::size_t>(pm.size) : 2048u;
+            std::size_t sz;
+            if (is_fft_type(pm.type))
+                sz = fft_window_for_type(pm.type) / 2 + 1;
+            else
+                sz = pm.size > 0 ? static_cast<std::size_t>(pm.size) : 2048u;
             buf_registry.emplace(pm.buf_id,
                                  SharedBufs{std::make_shared<std::vector<float>>(sz, 0.f),
                                             std::make_shared<std::vector<float>>(sz, 0.f)});
@@ -805,12 +688,27 @@ static PatchSlot* build_patch_slot(const ParsedPatch& patch, float sr) {
                 mod                     = std::make_unique<PeekModule>(interp, l_buf);
             } else if (pm.type == "poke") {
                 mod = std::make_unique<PokeModule>(l_buf, r_buf);
+            } else if (is_fft_type(pm.type)) {
+                // Shared FFT: l_buf and r_buf receive the live magnitude arrays.
+                // A peek on the same :buf-id reads L-channel spectrum by CV-indexed bin.
+                mod = std::make_unique<FftModule>(fft_window_for_type(pm.type), l_buf, r_buf);
             } else {
                 return nullptr; // :buf-id on unsupported module type
             }
             if (!mod)
                 return nullptr;
             g.add_module(std::move(mod));
+            continue;
+        }
+
+        // VCV bridge — needs shm_name and n_channels; handled before registry.
+        if (pm.type == "vcv-bridge") {
+            auto bridge = std::make_unique<VCVBridgeModule>(pm.shm_name, pm.n_channels);
+            if (!bridge)
+                return nullptr;
+            if (pm.shm_name == "kairos-vcv-tty")
+                vcv_tty_bridge = bridge.get();
+            g.add_module(std::move(bridge));
             continue;
         }
 
@@ -847,10 +745,11 @@ static PatchSlot* build_patch_slot(const ParsedPatch& patch, float sr) {
     if (!res.has_value())
         return nullptr;
 
-    auto* slot      = new PatchSlot{};
-    slot->engine    = std::move(*res);
-    slot->audio_in  = audio_in;
-    slot->audio_out = audio_out;
+    auto* slot           = new PatchSlot{};
+    slot->engine         = std::move(*res);
+    slot->audio_in       = audio_in;
+    slot->audio_out      = audio_out;
+    slot->vcv_tty_bridge = vcv_tty_bridge;
 
     slot->engine->prepare(sr);
     slot->param_frame.assign(static_cast<std::size_t>(slot->engine->port_schema().size()), 0.f);
@@ -983,6 +882,7 @@ class KairosGridPlugin {
         engine_          = std::move(next->engine);
         audio_in_        = next->audio_in;
         audio_out_       = next->audio_out;
+        vcv_tty_bridge_  = next->vcv_tty_bridge;
         env_tempo_id_    = next->env_tempo_id;
         env_beat_id_     = next->env_beat_id;
         env_bar_id_      = next->env_bar_id;
@@ -1095,6 +995,24 @@ class KairosGridPlugin {
 
     clap_process_status process(const clap_process_t* proc) {
         try_install_pending_slot();
+
+        // Drain any staged ctrl response from the control thread into VCVBridgeModule.
+        // Called on audio thread; vcv_tty_bridge_ is stable here (updated above).
+        if (vcv_tty_bridge_ && tty_resp_ready_.load(std::memory_order_acquire)) {
+            std::string resp;
+            uint8_t     rtype = 0;
+            {
+                std::lock_guard<std::mutex> lk(tty_resp_mu_);
+                if (tty_resp_ready_.load(std::memory_order_relaxed)) {
+                    resp  = std::move(tty_resp_pending_);
+                    rtype = tty_resp_type_;
+                    tty_resp_ready_.store(false, std::memory_order_release);
+                }
+            }
+            if (!resp.empty())
+                vcv_tty_bridge_->push_ctrl_response(rtype, resp);
+        }
+
         if (!engine_.has_value())
             return CLAP_PROCESS_ERROR;
 
@@ -1149,6 +1067,8 @@ class KairosGridPlugin {
         if (std::strcmp(id, CLAP_EXT_KAIROS_HOT_SWAP) == 0)
             return &s_hot_swap_ext;
 #endif
+        if (std::strcmp(id, CLAP_EXT_KAIROS_VCV_CTRL) == 0)
+            return &s_vcv_ctrl_ext;
         return nullptr;
     }
 
@@ -1447,41 +1367,12 @@ class KairosGridPlugin {
         AudioInputModule*  raw_in       = audio_in_up.get();
         AudioOutputModule* raw_out      = audio_out_up.get();
 
-#if defined(KAIROS_GRID_PLUGIN_HAS_MI)
-        const int                  env_idx = g.add_module(std::make_unique<EnvironmentModule>());
-        [[maybe_unused]] const int in_idx  = g.add_module(std::move(audio_in_up));
-        const int                  out_idx = g.add_module(std::move(audio_out_up));
-
-        auto              plaits_up  = std::make_unique<mi::PlaitsModule>();
-        auto              svf_up     = std::make_unique<mi::SvfModule>();
-        mi::PlaitsModule* raw_plaits = plaits_up.get();
-        mi::SvfModule*    raw_svf    = svf_up.get();
-
-        raw_plaits->param_ports.push_back({"plaits/harmonics", 1});
-        raw_plaits->param_ports.push_back({"plaits/timbre", 2});
-        raw_plaits->param_ports.push_back({"plaits/morph", 3});
-        raw_plaits->param_ports.push_back({"plaits/engine", 6});
-        raw_plaits->param_ports.push_back({"plaits/level", 5});
-
-        raw_svf->param_ports.push_back({"svf/cutoff", 1});
-        raw_svf->param_ports.push_back({"svf/q", 2});
-
-        const int plaits_idx = g.add_module(std::move(plaits_up));
-        const int svf_idx    = g.add_module(std::move(svf_up));
-
-        g.add_cable({env_idx, EnvironmentModule::k_voice_note, plaits_idx, 0});
-        g.add_cable({env_idx, EnvironmentModule::k_voice_gate, plaits_idx, 4});
-        g.add_cable({plaits_idx, 0, svf_idx, 0});
-        g.add_cable({svf_idx, 0, out_idx, AudioOutputModule::k_left});
-        g.add_cable({svf_idx, 0, out_idx, AudioOutputModule::k_right});
-#else
         g.add_module(std::make_unique<EnvironmentModule>());
         const int in_idx  = g.add_module(std::move(audio_in_up));
         const int out_idx = g.add_module(std::move(audio_out_up));
 
         g.add_cable({in_idx, AudioInputModule::k_left, out_idx, AudioOutputModule::k_left});
         g.add_cable({in_idx, AudioInputModule::k_right, out_idx, AudioOutputModule::k_right});
-#endif
 
         auto res = g.build();
         if (!res.has_value())
@@ -1498,16 +1389,6 @@ class KairosGridPlugin {
                 param_frame_[i].store(0.f, std::memory_order_relaxed);
             param_count_.store(n, std::memory_order_release);
         }
-
-#if defined(KAIROS_GRID_PLUGIN_HAS_MI)
-        set_param(find_port("plaits/harmonics"), 0.5f);
-        set_param(find_port("plaits/timbre"), 0.5f);
-        set_param(find_port("plaits/morph"), 0.5f);
-        set_param(find_port("plaits/engine"), 0.f);
-        set_param(find_port("plaits/level"), 1.f);
-        set_param(find_port("svf/cutoff"), 0.35f);
-        set_param(find_port("svf/q"), 0.1f);
-#endif
 
         cache_port_ids();
         rebuild_tap_schema_c();
@@ -1616,6 +1497,18 @@ class KairosGridPlugin {
     }
     static void s_on_main_thread(const clap_plugin_t* p) { cast_mut(p)->on_main_thread(); }
 
+    // VCV ctrl extension — called from the kairos control thread (not audio thread).
+    static void s_vcv_ctrl_push(const clap_plugin_t* p, uint8_t type, const char* payload,
+                                uint32_t payload_len) noexcept {
+        auto* kg = cast_mut(p);
+        {
+            std::lock_guard<std::mutex> lk(kg->tty_resp_mu_);
+            kg->tty_resp_pending_.assign(payload, payload_len);
+            kg->tty_resp_type_ = type;
+        }
+        kg->tty_resp_ready_.store(true, std::memory_order_release);
+    }
+
     // -----------------------------------------------------------------------
     // Static extension vtables
     // -----------------------------------------------------------------------
@@ -1629,6 +1522,7 @@ class KairosGridPlugin {
 #if defined(KAIROS_GRID_PLUGIN_HAS_WASM)
     static const clap_kairos_hot_swap_t s_hot_swap_ext;
 #endif
+    static const clap_kairos_vcv_ctrl_t s_vcv_ctrl_ext;
 
     // -----------------------------------------------------------------------
     // Members
@@ -1644,6 +1538,14 @@ class KairosGridPlugin {
     std::optional<GridEngine>           engine_;
     AudioInputModule*                   audio_in_{nullptr};
     AudioOutputModule*                  audio_out_{nullptr};
+    // Raw pointer to the TTY VCVBridgeModule (if patch contains one).
+    // Audio-thread only: updated in try_install_pending_slot, read in process().
+    kairos_grid::vcv_bridge::VCVBridgeModule* vcv_tty_bridge_{nullptr};
+    // Ctrl response staged by control thread; drained into vcv_tty_bridge_ in process().
+    std::mutex        tty_resp_mu_;
+    std::string       tty_resp_pending_;
+    uint8_t           tty_resp_type_{0};
+    std::atomic<bool> tty_resp_ready_{false};
 
     // param_frame_ and param_count_ are written by the audio thread
     // (try_install_pending_slot, set_param, param_bus_set_param_frame) and read
@@ -1723,6 +1625,10 @@ const clap_kairos_hot_swap_t KairosGridPlugin::s_hot_swap_ext = {
 };
 #endif
 
+const clap_kairos_vcv_ctrl_t KairosGridPlugin::s_vcv_ctrl_ext = {
+    .push_ctrl_response = &KairosGridPlugin::s_vcv_ctrl_push,
+};
+
 // ---------------------------------------------------------------------------
 // Plugin factory
 // ---------------------------------------------------------------------------
@@ -1757,7 +1663,63 @@ static const clap_plugin_factory_t k_factory = {
 
 extern "C" {
 
-static bool entry_init(const char* /*plugin_path*/) {
+// Per-extension registry context: wraps ModuleRegistryImpl with the kgext path
+// so extensions can locate co-located companions via companion_path(".kgnwt").
+struct ExtensionRegistryContext : kairos_grid::GridModuleRegistry {
+    kairos_grid::ModuleRegistryImpl& inner;
+    std::filesystem::path            kgext_path;
+
+    ExtensionRegistryContext(kairos_grid::ModuleRegistryImpl& r, std::filesystem::path p)
+        : inner(r), kgext_path(std::move(p)) {}
+
+    void add(std::string key, kairos_grid::ModuleSpec spec) override {
+        inner.add(std::move(key), std::move(spec));
+    }
+
+    std::string companion_path(const std::string& ext) const override {
+        auto            candidate = kgext_path;
+        std::error_code ec;
+        candidate.replace_extension(ext);
+        if (std::filesystem::exists(candidate, ec))
+            return candidate.string();
+        return {};
+    }
+};
+
+static void load_kgext_extensions(kairos_grid::ModuleRegistryImpl& reg, const char* plugin_path) {
+    if (!plugin_path)
+        return;
+
+    // Look for *.kgext files in the same directory as the .clap bundle.
+    // A .kgext is a shared library exporting kairos_grid_extension_entry.
+    std::error_code ec;
+    auto            dir = std::filesystem::path(plugin_path).parent_path();
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (entry.path().extension() != ".kgext")
+            continue;
+        void* handle = dlopen(entry.path().c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!handle) {
+            std::fprintf(stderr, "kairos-grid: dlopen %s failed: %s\n", entry.path().c_str(),
+                         dlerror());
+            continue;
+        }
+        auto* fn = reinterpret_cast<kairos_grid_extension_entry_fn*>(
+            dlsym(handle, KAIROS_GRID_EXTENSION_ENTRY));
+        if (fn) {
+            ExtensionRegistryContext ctx(reg, entry.path());
+            fn(ctx);
+        } else {
+            std::fprintf(stderr, "kairos-grid: %s has no %s symbol\n", entry.path().c_str(),
+                         KAIROS_GRID_EXTENSION_ENTRY);
+            dlclose(handle);
+        }
+    }
+}
+
+static bool entry_init(const char* plugin_path) {
+    auto& reg = kairos_grid::get_module_registry();
+    kairos_grid::populate_builtins(reg);
+    load_kgext_extensions(reg, plugin_path);
     return true;
 }
 static void entry_deinit() {

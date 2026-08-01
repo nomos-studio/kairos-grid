@@ -11,6 +11,8 @@ add_executable(kairos-grid-tests
     test_sah_module.cpp
     test_buffer_module.cpp
     test_clock_division_module.cpp
+    test_es_codec.cpp
+    test_z_delay_module.cpp
 )
 
 target_link_libraries(kairos-grid-tests
@@ -269,6 +271,12 @@ endif()
 if(TARGET kairos_grid::fft-modules)
     add_executable(kairos-grid-fft-tests
         test_fft_module.cpp
+        test_spectral_freeze_module.cpp
+        test_spectral_smear_module.cpp
+        test_spectral_gate_module.cpp
+        test_bin_shift_module.cpp
+        test_spectral_peaks_module.cpp
+        test_partial_tracker_module.cpp
     )
 
     target_link_libraries(kairos-grid-fft-tests
@@ -331,3 +339,28 @@ if(TARGET kairos_grid::mi)
 
     catch_discover_tests(kairos-grid-mi-tests)
 endif()
+
+# VCV bridge transport tests — shm_ring_buffer.hpp uses POSIX shm + threads.
+# On Linux shm_open lives in librt; on macOS it is in libc.
+find_library(LIBRT rt)
+
+add_executable(kairos-grid-vcv-bridge-tests
+    test_shm_ring_buffer.cpp
+    test_vcv_bridge_module.cpp
+)
+
+target_link_libraries(kairos-grid-vcv-bridge-tests
+    PRIVATE
+        kairos_grid::engine
+        Catch2::Catch2WithMain
+        sanitizers::sanitizers
+        $<$<BOOL:${LIBRT}>:${LIBRT}>
+)
+
+set_target_properties(kairos-grid-vcv-bridge-tests PROPERTIES
+    CXX_STANDARD          20
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS        OFF
+)
+
+catch_discover_tests(kairos-grid-vcv-bridge-tests)

@@ -257,6 +257,73 @@ TEST_CASE("FftModule: 2048-window DC centroid near 0", "[fft]") {
 }
 
 // ---------------------------------------------------------------------------
+// :buf-id protocol — shared magnitude storage (Phase 2)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("FftModule: shared-mode constructor accepts external mag buffers", "[fft][buf-id]") {
+    // Simulate what the factory does: pre-allocate shared_ptrs and inject them.
+    const std::size_t nb    = 64 / 2 + 1; // 33 bins for window=64
+    auto              mag_l = std::make_shared<std::vector<float>>(nb, 0.f);
+    auto              mag_r = std::make_shared<std::vector<float>>(nb, 0.f);
+
+    FftModule m(64, mag_l, mag_r);
+    REQUIRE(m.window() == 64);
+    REQUIRE(m.mag_l().size() == nb);
+    REQUIRE(m.mag_r().size() == nb);
+}
+
+TEST_CASE("FftModule: mag_l_ptr / mag_r_ptr return the injected shared_ptrs", "[fft][buf-id]") {
+    const std::size_t nb    = 64 / 2 + 1;
+    auto              mag_l = std::make_shared<std::vector<float>>(nb, 0.f);
+    auto              mag_r = std::make_shared<std::vector<float>>(nb, 0.f);
+
+    FftModule m(64, mag_l, mag_r);
+    REQUIRE(m.mag_l_ptr() == mag_l); // same shared_ptr object
+    REQUIRE(m.mag_r_ptr() == mag_r);
+}
+
+TEST_CASE("FftModule: shared mag visible to external observer after analysis hop",
+          "[fft][buf-id]") {
+    // An external holder of the same shared_ptr sees magnitude updates written
+    // by FftModule's internal analysis hop.
+    const std::size_t nb    = 64 / 2 + 1;
+    auto              mag_l = std::make_shared<std::vector<float>>(nb, 0.f);
+    auto              mag_r = std::make_shared<std::vector<float>>(nb, 0.f);
+
+    FftModule m(64, mag_l, mag_r);
+    // Feed DC on L, silence on R.
+    push(m, 1.f, 0.f, 64);
+
+    // The external shared_ptr holders see the live magnitude — same storage.
+    REQUIRE((*mag_l)[0] > 0.f);                        // DC energy visible in L
+    REQUIRE((*mag_r)[0] == Approx(0.f).margin(1e-4f)); // R stays silent
+}
+
+TEST_CASE("FftModule: standalone mag_l_ptr returns valid shared_ptr", "[fft][buf-id]") {
+    // Standalone (no :buf-id) mode still exposes shared_ptrs so downstream
+    // C++ code can share the mag arrays without EDN wiring.
+    FftModule m(64);
+    REQUIRE(m.mag_l_ptr() != nullptr);
+    REQUIRE(m.mag_r_ptr() != nullptr);
+    REQUIRE(m.mag_l_ptr()->size() == 64 / 2 + 1);
+}
+
+TEST_CASE("FftModule: shared storage prepare() zeroes the external buffer", "[fft][buf-id]") {
+    const std::size_t     nb    = 64 / 2 + 1;
+    auto                  mag_l = std::make_shared<std::vector<float>>(nb, 0.f);
+    auto                  mag_r = std::make_shared<std::vector<float>>(nb, 0.f);
+    FftModule             m(64, mag_l, mag_r);
+    const GridProcessArgs kArgs{48000.f, 1.f / 48000.f, 0};
+
+    push(m, 1.f, 0.f, 64); // populate mag_l
+    REQUIRE((*mag_l)[0] > 0.f);
+
+    m.prepare(kArgs);
+    for (float v : *mag_l)
+        REQUIRE(v == 0.f); // prepare() zeroes the shared buffer
+}
+
+// ---------------------------------------------------------------------------
 // Copy / move protection (static assertions, not runtime tests)
 // ---------------------------------------------------------------------------
 

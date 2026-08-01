@@ -41,51 +41,50 @@
 // Window must be a power of two for best KissFFT performance (it works with
 // any N but powers of two are the fast path).
 //
-// :buf-id integration (full magnitude array sharing with peek/poke) is a
-// planned Phase 2 extension.  The internal magnitude arrays are accessible
-// via mag_l() / mag_r() for direct C++ use.
+// :buf-id protocol (Phase 2):
+//   The L and R magnitude arrays are stored as shared_ptr<vector<float>> so the
+//   factory can inject pre-created storage.  A peek module on the same :buf-id
+//   reads directly from the live magnitude buffer; index [0, 1] maps to bins
+//   [0, window/2] (DC to Nyquist).
+//
+//   Standalone construction (no :buf-id): FftModule owns its own mag storage.
+//   Shared construction (factory with :buf-id): factory provides pre-created
+//   shared_ptrs; mag_l_ptr() / mag_r_ptr() hand them to downstream peek modules.
 
 #pragma once
 
 #include <kairos_grid/grid_module.hpp>
-
-// KissFFT headers — included after the engine header to avoid confusion with
-// any project-level kiss_fft.h that might shadow the vendored copy.
 #include <kiss_fft.h>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 namespace kairos_grid {
 
 class FftModule : public GridModule {
   public:
+    // Standalone: allocates its own magnitude storage.
     explicit FftModule(std::size_t window = 1024)
+        : FftModule(window, std::make_shared<std::vector<float>>(window / 2 + 1, 0.f),
+                    std::make_shared<std::vector<float>>(window / 2 + 1, 0.f)) {}
+
+    // Shared (:buf-id): factory provides pre-created magnitude buffers.
+    // The shared_ptrs are written by this module and readable by peer peek modules.
+    FftModule(std::size_t window, std::shared_ptr<std::vector<float>> mag_l,
+              std::shared_ptr<std::vector<float>> mag_r)
         : GridModule(2, 6), window_(window), hop_size_(window / 4), hann_(window) {
-        // Pre-compute Hann window.
         const float denom = static_cast<float>(window_ > 1u ? window_ - 1u : 1u);
-        for (std::size_t i = 0; i < window_; ++i) {
+        for (std::size_t i = 0; i < window_; ++i)
             hann_[i] =
                 0.5f *
                 (1.f - std::cos(2.f * 3.14159265358979323846f * static_cast<float>(i) / denom));
-        }
-        // Allocate per-channel state.
+
         const int N = static_cast<int>(window_);
-        for (auto& ch : ch_) {
-            ch.ring.assign(window_, 0.f);
-            ch.frame.assign(window_, 0.f);
-            ch.in_cpx.resize(window_);
-            ch.out_cpx.resize(window_);
-            ch.mag.assign(window_ / 2 + 1, 0.f);
-            ch.prev_mag.assign(window_ / 2 + 1, 0.f);
-            for (auto& c : ch.in_cpx) {
-                c.r = 0.f;
-                c.i = 0.f;
-            }
-            ch.cfg = kiss_fft_alloc(N, 0 /* forward */, nullptr, nullptr);
-        }
+        init_channel(ch_[0], N, std::move(mag_l));
+        init_channel(ch_[1], N, std::move(mag_r));
     }
 
     ~FftModule() override {
@@ -102,7 +101,7 @@ class FftModule : public GridModule {
             out.voltage = 0.f;
         for (auto& ch : ch_) {
             std::fill(ch.ring.begin(), ch.ring.end(), 0.f);
-            std::fill(ch.mag.begin(), ch.mag.end(), 0.f);
+            std::fill(ch.mag->begin(), ch.mag->end(), 0.f);
             std::fill(ch.prev_mag.begin(), ch.prev_mag.end(), 0.f);
             ch.wpos      = 0;
             ch.hop_count = 0;
@@ -123,34 +122,51 @@ class FftModule : public GridModule {
         outputs[5].voltage = ch_[1].flux;
     }
 
-    // Direct access to magnitude arrays for C++ callers (e.g. unit tests,
-    // future :buf-id integration).  Length is window/2 + 1 (DC to Nyquist).
-    const std::vector<float>& mag_l() const noexcept { return ch_[0].mag; }
-    const std::vector<float>& mag_r() const noexcept { return ch_[1].mag; }
+    // Magnitude array accessors — length is window/2+1 (DC to Nyquist).
+    const std::vector<float>& mag_l() const noexcept { return *ch_[0].mag; }
+    const std::vector<float>& mag_r() const noexcept { return *ch_[1].mag; }
+
+    // Shared-pointer accessors — hand to PeekModule for :buf-id wiring.
+    std::shared_ptr<std::vector<float>> mag_l_ptr() const noexcept { return ch_[0].mag; }
+    std::shared_ptr<std::vector<float>> mag_r_ptr() const noexcept { return ch_[1].mag; }
 
     std::size_t window() const noexcept { return window_; }
     std::size_t hop_size() const noexcept { return hop_size_; }
 
   private:
     struct ChanState {
-        std::vector<float>        ring;
-        std::vector<float>        frame;
-        std::vector<kiss_fft_cpx> in_cpx;
-        std::vector<kiss_fft_cpx> out_cpx;
-        std::vector<float>        mag;
-        std::vector<float>        prev_mag;
-        kiss_fft_cfg              cfg{nullptr};
-        std::size_t               wpos{0};
-        std::size_t               hop_count{0};
-        float                     centroid{0.f};
-        float                     flatness{0.f};
-        float                     flux{0.f};
+        std::vector<float>                  ring;
+        std::vector<float>                  frame;
+        std::vector<kiss_fft_cpx>           in_cpx;
+        std::vector<kiss_fft_cpx>           out_cpx;
+        std::shared_ptr<std::vector<float>> mag;      // shared; written here, readable by peek
+        std::vector<float>                  prev_mag; // internal; flux computation only
+        kiss_fft_cfg                        cfg{nullptr};
+        std::size_t                         wpos{0};
+        std::size_t                         hop_count{0};
+        float                               centroid{0.f};
+        float                               flatness{0.f};
+        float                               flux{0.f};
     };
 
     std::size_t              window_;
     std::size_t              hop_size_;
     std::vector<float>       hann_;
     std::array<ChanState, 2> ch_;
+
+    static void init_channel(ChanState& ch, int N, std::shared_ptr<std::vector<float>> mag_ptr) {
+        ch.ring.assign(static_cast<std::size_t>(N), 0.f);
+        ch.frame.assign(static_cast<std::size_t>(N), 0.f);
+        ch.in_cpx.resize(static_cast<std::size_t>(N));
+        ch.out_cpx.resize(static_cast<std::size_t>(N));
+        ch.mag = std::move(mag_ptr);
+        ch.prev_mag.assign(static_cast<std::size_t>(N) / 2 + 1, 0.f);
+        for (auto& c : ch.in_cpx) {
+            c.r = 0.f;
+            c.i = 0.f;
+        }
+        ch.cfg = kiss_fft_alloc(N, 0 /* forward */, nullptr, nullptr);
+    }
 
     void update_channel(ChanState& ch, float sample) {
         ch.ring[ch.wpos] = sample;
@@ -167,27 +183,26 @@ class FftModule : public GridModule {
             ch.frame[i]           = ch.ring[idx] * hann_[i];
         }
 
-        // Feed real samples as complex with zero imaginary parts.
         for (std::size_t i = 0; i < window_; ++i) {
             ch.in_cpx[i].r = ch.frame[i];
             ch.in_cpx[i].i = 0.f;
         }
         kiss_fft(ch.cfg, ch.in_cpx.data(), ch.out_cpx.data());
 
-        const std::size_t nb = window_ / 2 + 1;
+        const std::size_t nb  = window_ / 2 + 1;
+        auto&             mag = *ch.mag;
 
-        // Magnitude.
         for (std::size_t k = 0; k < nb; ++k) {
             const float r  = ch.out_cpx[k].r;
             const float im = ch.out_cpx[k].i;
-            ch.mag[k]      = std::sqrt(r * r + im * im);
+            mag[k]         = std::sqrt(r * r + im * im);
         }
 
         // Spectral centroid [0, 1].
         float sum_km = 0.f, sum_m = 0.f;
         for (std::size_t k = 0; k < nb; ++k) {
-            sum_km += static_cast<float>(k) * ch.mag[k];
-            sum_m += ch.mag[k];
+            sum_km += static_cast<float>(k) * mag[k];
+            sum_m += mag[k];
         }
         ch.centroid = (sum_m > 1e-8f)
                           ? std::clamp(sum_km / sum_m / static_cast<float>(nb - 1u), 0.f, 1.f)
@@ -197,7 +212,7 @@ class FftModule : public GridModule {
         constexpr float eps     = 1e-10f;
         float           sum_log = 0.f, sum_a = 0.f;
         for (std::size_t k = 0; k < nb; ++k) {
-            const float m = ch.mag[k] + eps;
+            const float m = mag[k] + eps;
             sum_log += std::log(m);
             sum_a += m;
         }
@@ -208,13 +223,13 @@ class FftModule : public GridModule {
         // Positive-only spectral flux [0, 1] — onset energy.
         float sum_flux = 0.f, sum_nrm = 0.f;
         for (std::size_t k = 0; k < nb; ++k) {
-            const float diff = ch.mag[k] - ch.prev_mag[k];
+            const float diff = mag[k] - ch.prev_mag[k];
             sum_flux += (diff > 0.f) ? diff : 0.f;
-            sum_nrm += ch.mag[k] + ch.prev_mag[k] + eps;
+            sum_nrm += mag[k] + ch.prev_mag[k] + eps;
         }
         ch.flux = std::clamp(2.f * sum_flux / sum_nrm, 0.f, 1.f);
 
-        std::copy(ch.mag.begin(), ch.mag.end(), ch.prev_mag.begin());
+        std::copy(mag.begin(), mag.end(), ch.prev_mag.begin());
     }
 };
 
