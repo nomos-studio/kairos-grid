@@ -46,6 +46,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <string>
 #include <vector>
 
 namespace kairos_grid {
@@ -66,6 +67,17 @@ class SpectralPeaksModule : public GridModule {
         }
         candidates_.reserve(window / 2);
         fwd_cfg_ = kiss_fft_alloc(static_cast<int>(window_), 0, nullptr, nullptr);
+
+        // Performance taps: per-slot peak freq + amp, exposed to the tap bus so the
+        // analysis is readable over IPC (the spectral "ears"). taps[0..7] = freq,
+        // taps[8..15] = amp, index-aligned with outputs[0..15]. The hop trigger
+        // (outputs[16]) is not tapped — a one-sample pulse is meaningless at the
+        // ~30 Hz tap telemetry rate.
+        taps.reserve(2 * kMaxPeaks);
+        for (std::size_t i = 0; i < kMaxPeaks; ++i)
+            taps.push_back({"spectral/peak-" + std::to_string(i) + "-freq", 0.f});
+        for (std::size_t i = 0; i < kMaxPeaks; ++i)
+            taps.push_back({"spectral/peak-" + std::to_string(i) + "-amp", 0.f});
     }
 
     ~SpectralPeaksModule() override {
@@ -105,8 +117,12 @@ class SpectralPeaksModule : public GridModule {
         }
 
         for (std::size_t i = 0; i < kMaxPeaks; ++i) {
-            outputs[i].voltage             = (i < n_peaks_) ? peaks_[i].freq : 0.f;
-            outputs[kMaxPeaks + i].voltage = (i < n_peaks_) ? peaks_[i].amp : 0.f;
+            const float f                  = (i < n_peaks_) ? peaks_[i].freq : 0.f;
+            const float a                  = (i < n_peaks_) ? peaks_[i].amp : 0.f;
+            outputs[i].voltage             = f;
+            outputs[kMaxPeaks + i].voltage = a;
+            taps[i].value                  = f; // spectral/peak-i-freq
+            taps[kMaxPeaks + i].value      = a; // spectral/peak-i-amp
         }
         outputs[2 * kMaxPeaks].voltage = hop_fired ? 1.f : 0.f;
     }

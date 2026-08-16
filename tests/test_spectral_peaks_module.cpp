@@ -234,6 +234,33 @@ TEST_CASE("SpectralPeaksModule: 512-window — sine peak detected near expected 
 }
 
 // ---------------------------------------------------------------------------
+// Performance taps — the spectral "ears" (tap→IPC bridge)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("SpectralPeaksModule: declares 16 taps — peak freq + amp per slot",
+          "[spectral-peaks][taps]") {
+    SpectralPeaksModule m;
+    REQUIRE(m.taps.size() == 2 * kN); // 8 freq + 8 amp; trigger not tapped
+    REQUIRE(m.taps[0].name == "spectral/peak-0-freq");
+    REQUIRE(m.taps[kN - 1].name == "spectral/peak-7-freq");
+    REQUIRE(m.taps[kN].name == "spectral/peak-0-amp");
+    REQUIRE(m.taps[2 * kN - 1].name == "spectral/peak-7-amp");
+}
+
+TEST_CASE("SpectralPeaksModule: peak-0-freq tap reflects the measured sine frequency",
+          "[spectral-peaks][taps]") {
+    // The spectral-ears assertion: feed a sine at a known bin and confirm the
+    // freq TAP (what the tap→IPC bridge ships to nous) matches the measurement.
+    SpectralPeaksModule m(64);
+    const float         freq = push_sine_peak_freq(m, 64, 8.f, 0.f); // sets outputs + taps
+    if (m.n_peaks() > 0) {
+        REQUIRE(m.taps[0].value == freq);                             // tap mirrors output
+        REQUIRE(m.taps[0].value == Approx(8.f / 32.f).margin(0.05f)); // near expected freq
+        REQUIRE(m.taps[kN].value > 0.f);                              // peak-0-amp tap non-zero
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Copy / move protection
 // ---------------------------------------------------------------------------
 
